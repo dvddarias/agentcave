@@ -1,0 +1,251 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans:
+    "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, "Cascadia Code", Menlo, Consolas, monospace;
+
+  /* Cave neutrals (slightly warm) */
+  --color-cave-950: #08090b;
+  --color-cave-925: #0b0c0f;
+  --color-cave-900: #0f1114;
+  --color-cave-850: #13161a;
+  --color-cave-800: #181b20;
+  --color-cave-750: #1e2228;
+  --color-cave-700: #262b32;
+  --color-cave-600: #343a43;
+  --color-cave-500: #4d5562;
+  --color-cave-400: #6f7886;
+  --color-cave-300: #98a1ad;
+  --color-cave-200: #c4cad2;
+  --color-cave-100: #e6e9ed;
+
+  /* Torch accent */
+  --color-torch-200: #fde68a;
+  --color-torch-300: #fcd34d;
+  --color-torch-400: #fbbf24;
+  --color-torch-500: #f59e0b;
+  --color-torch-600: #d97706;
+  --color-torch-700: #b45309;
+
+  --animate-flicker: flicker 2.4s ease-in-out infinite;
+  @keyframes flicker {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    45% {
+      opacity: 0.55;
+    }
+    60% {
+      opacity: 0.85;
+    }
+  }
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-cave-925 text-cave-200 antialiased;
+  font-feature-settings: "cv11", "ss01";
+}
+
+::selection {
+  background: color-mix(in oklab, var(--color-torch-500) 35%, transparent);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-cave-600) transparent;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-torch-500);
+  outline-offset: 2px;
+}
+
+/* ---------- Markdown ---------- */
+.md {
+  @apply text-[0.925rem] leading-relaxed text-cave-200;
+  overflow-wrap: anywhere;
+}
+.md > :first-child {
+  margin-top: 0;
+}
+.md > :last-child {
+  margin-bottom: 0;
+}
+.md p {
+  @apply my-2.5;
+}
+.md h1 {
+  @apply mt-5 mb-2.5 text-xl font-semibold text-cave-100;
+}
+.md h2 {
+  @apply mt-5 mb-2 text-lg font-semibold text-cave-100;
+}
+.md h3,
+.md h4 {
+  @apply mt-4 mb-1.5 text-base font-semibold text-cave-100;
+}
+.md a {
+  @apply text-torch-400 underline decoration-torch-700 underline-offset-2 hover:decoration-torch-400;
+}
+.md strong {
+  @apply font-semibold text-cave-100;
+}
+.md ul {
+  @apply my-2.5 list-disc pl-5;
+}
+.md ol {
+  @apply my-2.5 list-decimal pl-5;
+}
+.md li {
+  @apply my-1;
+}
+.md li > p {
+  @apply my-1;
+}
+.md blockquote {
+  @apply my-3 border-l-2 border-torch-600/60 pl-3 text-cave-300 italic;
+}
+.md hr {
+  @apply my-5 border-cave-700;
+}
+.md :not(pre) > code {
+  @apply rounded bg-cave-750 px-1.5 py-0.5 font-mono text-[0.84em] text-torch-200;
+}
+.md pre {
+  @apply my-3 overflow-x-auto rounded-lg border border-cave-700 bg-cave-950 p-3 font-mono text-[0.8rem] leading-relaxed;
+}
+.md table {
+  @apply my-3 block w-full overflow-x-auto border-collapse text-sm;
+}
+.md th {
+  @apply border border-cave-700 bg-cave-800 px-2.5 py-1.5 text-left font-semibold text-cave-100;
+}
+.md td {
+  @apply border border-cave-700 px-2.5 py-1.5;
+}
+.md img {
+  @apply max-w-full rounded;
+}
+.md input[type="checkbox"] {
+  @apply mr-1.5 accent-torch-500;
+}
+
+/* Thinking text is quieter */
+.md.thinking {
+  @apply text-[0.86rem] text-cave-300;
+}
+.md.thinking strong {
+  @apply text-cave-200;
+}
+
+/* ---------- highlight.js (cave theme) ---------- */
+.hljs {
+  color: #c9d1d9;
+}
+.hljs-comment,
+.hljs-quote {
+  color: #6f7886;
+  font-style: italic;
+}
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal,
+.hljs-built_in {
+  color: #f59e0b;
+}
+.hljs-string,
+.hljs-attr .hljs-string,
+.hljs-regexp,
+.hljs-addition {
+  color: #a5d6a7;
+}
+.hljs-number,
+.hljs-symbol,
+.hljs-variable,
+.hljs-template-variable {
+  color: #f0b27a;
+}
+.hljs-title,
+.hljs-section,
+.hljs-function .hljs-title,
+.hljs-title.function_ {
+  color: #7dd3fc;
+}
+.hljs-attr,
+.hljs-attribute,
+.hljs-property,
+.hljs-name,
+.hljs-type {
+  color: #c4b5fd;
+}
+.hljs-meta {
+  color: #98a1ad;
+}
+.hljs-deletion {
+  color: #fda4af;
+}
+.hljs-emphasis {
+  font-style: italic;
+}
+.hljs-strong {
+  font-weight: 600;
+}
+
+/* ---------- CodeMirror ---------- */
+.cm-theme-cave .cm-editor {
+  @apply h-full bg-transparent text-[0.85rem];
+}
+.cm-theme-cave .cm-editor.cm-focused {
+  outline: none;
+}
+.cm-theme-cave .cm-scroller {
+  @apply font-mono leading-relaxed;
+}
+.cm-theme-cave .cm-gutters {
+  @apply border-r border-cave-750 bg-cave-900 text-cave-500;
+}
+.cm-theme-cave .cm-activeLine,
+.cm-theme-cave .cm-activeLineGutter {
+  background: color-mix(in oklab, var(--color-cave-700) 45%, transparent);
+}
+.cm-theme-cave .cm-cursor {
+  border-left-color: var(--color-torch-400);
+}
+.cm-theme-cave .cm-selectionBackground,
+.cm-theme-cave .cm-editor.cm-focused .cm-selectionBackground {
+  /* biome-ignore lint/complexity/noImportantStyles: CodeMirror sets the selection colour with an inline theme */
+  background: color-mix(in oklab, var(--color-torch-500) 28%, transparent) !important;
+}
+
+/* Subtle cave glow behind the logo */
+.torch-glow {
+  background: radial-gradient(
+    circle at 50% 60%,
+    color-mix(in oklab, var(--color-torch-500) 22%, transparent),
+    transparent 70%
+  );
+}
+
+@keyframes fadein {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.fade-in {
+  animation: fadein 0.25s ease-out both;
+}

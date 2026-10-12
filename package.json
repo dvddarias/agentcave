@@ -1,0 +1,28 @@
+{
+  "name": "agentcave",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "client",
+    "server",
+    "web"
+  ],
+  "engines": {
+    "node": ">=22.13"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.15"
+  },
+  "description": "Self-hosted runtime for Markdown-defined AI agents with a bash sandbox, an HTTP API and a live web UI.",
+  "scripts": {
+    "dev:server": "npm run dev -w @agentcave/server",
+    "dev:web": "npm run dev -w @agentcave/web",
+    "demo": "npm run build -w @agentcave/web && npm run demo -w @agentcave/server",
+    "build": "npm run build -w @agentcave/client && npm run build -w @agentcave/web && npm run build -w @agentcave/server",
+    "start": "npm run start -w @agentcave/server",
+    "test": "npm run test -w @agentcave/server",
+    "typecheck": "npm run typecheck -w @agentcave/client && npm run typecheck -w @agentcave/server && npm run typecheck -w @agentcave/web",
+    "lint": "biome check .",
+    "format": "biome check --write ."
+  }
+}

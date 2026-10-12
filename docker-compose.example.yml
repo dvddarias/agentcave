@@ -1,0 +1,21 @@
+# Example: run AgentCave with a persistent volume.
+#   docker compose -f docker-compose.example.yml up -d
+# Then open http://localhost:7420 and add your OpenRouter token in Settings.
+#
+# AgentCave has no authentication. Do not expose this port to the internet as-is:
+# put it behind your own reverse proxy / VPN / firewall.
+services:
+  agentcave:
+    image: ghcr.io/OWNER/agentcave:latest
+    # build: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:7420:7420"
+    volumes:
+      - agentcave-data:/data
+    environment:
+      LOG_LEVEL: info
+    stop_grace_period: 20s
+
+volumes:
+  agentcave-data:

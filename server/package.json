@@ -1,0 +1,40 @@
+{
+  "name": "@agentcave/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch --disable-warning=ExperimentalWarning src/index.ts",
+    "start": "node --disable-warning=ExperimentalWarning dist/index.js",
+    "build": "node build.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "demo": "tsx --disable-warning=ExperimentalWarning scripts/demo.ts",
+    "test:smoke": "vitest run test/smoke.test.ts"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.4",
+    "@openrouter/ai-sdk-provider": "^3.1.0",
+    "ai": "^7.0.137",
+    "ajv": "^8.20.0",
+    "bash-tool": "^1.3.19",
+    "fflate": "^0.8.3",
+    "hono": "^4.13.13",
+    "just-bash": "^3.6.0",
+    "yaml": "^2.9.0",
+    "zod": "^4.6.6"
+  },
+  "devDependencies": {
+    "@agentcave/client": "0.1.0",
+    "@types/node": "^24.0.0",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.3"
+  },
+  "engines": {
+    "node": ">=22.13"
+  }
+}

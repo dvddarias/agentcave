@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      # Optional repository secret: enables one tiny real cycle against OpenRouter.
+      OPENROUTER_TOKEN_TEST: ${{ secrets.OPENROUTER_TOKEN_TEST }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - name: Real OpenRouter smoke test
+        if: ${{ env.OPENROUTER_TOKEN_TEST != '' }}
+        run: npm run test:smoke -w @agentcave/server
