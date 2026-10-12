@@ -16,7 +16,8 @@ import { RetentionService } from "./retention.js";
 import { SettingsService } from "./settings.js";
 import { WebhookService } from "./webhooks.js";
 
-export const VERSION = "0.1.0";
+/** Set by the Docker build (git tag, or `main-<sha>`); falls back to the package version in development. */
+export const VERSION = process.env.AGENTCAVE_VERSION || "0.1.0-dev";
 
 export interface AgentCaveOptions {
   dataDir: string;

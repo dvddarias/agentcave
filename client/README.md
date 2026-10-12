@@ -1,6 +1,19 @@
 # @agentcave/client
 
-Tiny typed client for the [AgentCave](../README.md) HTTP API. No dependencies; uses `fetch`. Works in Node 20+ and browsers.
+Tiny typed client for the [AgentCave](https://github.com/dvddarias/agentcave) HTTP API. No dependencies; uses `fetch`. ESM, works in Node 20+ and browsers.
+
+## Install
+
+Straight from the GitHub Releases:
+
+```bash
+# a fixed version (recommended)
+npm install https://github.com/dvddarias/agentcave/releases/download/v0.1.0/agentcave-client-0.1.0.tgz
+# or the build of the latest push to main (re-run this command to update)
+npm install https://github.com/dvddarias/agentcave/releases/download/client-latest/agentcave-client.tgz
+```
+
+## Use
 
 ```ts
 import { AgentCave, fileInput } from "@agentcave/client";

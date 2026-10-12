@@ -6,7 +6,7 @@
 # put it behind your own reverse proxy / VPN / firewall.
 services:
   agentcave:
-    image: ghcr.io/OWNER/agentcave:latest
+    image: ghcr.io/dvddarias/agentcave:latest
     # build: .
     restart: unless-stopped
     ports:

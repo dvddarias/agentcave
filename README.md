@@ -15,7 +15,7 @@ A small, self-hosted container that runs **AI agents defined in Markdown**.
 ## Quick start (Docker)
 
 ```bash
-docker run -d --name agentcave -p 127.0.0.1:7420:7420 -v agentcave-data:/data ghcr.io/OWNER/agentcave:latest
+docker run -d --name agentcave -p 127.0.0.1:7420:7420 -v agentcave-data:/data ghcr.io/dvddarias/agentcave:latest
 ```
 
 Or build it yourself:
@@ -89,7 +89,14 @@ Base URL `http://<host>:7420/api/v1`. The UI has a full **API Docs** page (curl 
 
 **Webhooks.** At the end of every turn: `POST webhookUrl` with `{ event: "cycle.completed" | "cycle.failed" | "cycle.stopped", turn, sentAt, cycle }`. Failed deliveries are retried 5 times with backoff. If you set a signing secret in Settings, each call has `X-AgentCave-Signature: sha256=<hmac of the body>`.
 
-**TypeScript client** ([client/](client/README.md)), with zero dependencies:
+**TypeScript client** ([client/](client/README.md)), with zero dependencies. Install it in another project straight from the GitHub Releases (no npm account needed):
+
+```bash
+# a fixed version (recommended: it never changes under you)
+npm install https://github.com/dvddarias/agentcave/releases/download/v0.1.0/agentcave-client-0.1.0.tgz
+# or the build of the latest push to main
+npm install https://github.com/dvddarias/agentcave/releases/download/client-latest/agentcave-client.tgz
+```
 
 ```ts
 import { AgentCave } from "@agentcave/client";

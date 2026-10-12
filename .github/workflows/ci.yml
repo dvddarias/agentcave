@@ -1,12 +1,22 @@
 name: CI
 
+# Every push to main: test → Docker image ghcr.io/<owner>/agentcave:latest → client library "client-latest" release.
+# Every tag vX.Y.Z:  test → Docker image :X.Y.Z / :X.Y → client library release vX.Y.Z (fixed download URL).
+# Pull requests: tests only.
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   check:
+    name: Lint, typecheck, test, build
     runs-on: ubuntu-latest
     env:
       # Optional repository secret: enables one tiny real cycle against OpenRouter.
@@ -25,3 +35,87 @@ jobs:
       - name: Real OpenRouter smoke test
         if: ${{ env.OPENROUTER_TOKEN_TEST != '' }}
         run: npm run test:smoke -w @agentcave/server
+
+  image:
+    name: Docker image (ghcr.io)
+    needs: check
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Version
+        id: version
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then v="${GITHUB_REF_NAME#v}"; else v="main-${GITHUB_SHA::7}"; fi
+          echo "value=$v" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/agentcave
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=short
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: APP_VERSION=${{ steps.version.outputs.value }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  client:
+    name: Client library (GitHub Release)
+    needs: check
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Pack
+        id: pack
+        working-directory: client
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            npm version --no-git-tag-version --allow-same-version "${GITHUB_REF_NAME#v}"
+          fi
+          file=$(npm pack --silent | tail -n 1)
+          echo "file=client/$file" >> "$GITHUB_OUTPUT"
+      - name: Release vX.Y.Z (fixed URL)
+        if: github.ref_type == 'tag'
+        run: |
+          gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes --verify-tag
+          gh release upload "$GITHUB_REF_NAME" "${{ steps.pack.outputs.file }}" --clobber
+      - name: Release client-latest (rebuilt on every push to main)
+        if: github.ref == 'refs/heads/main'
+        run: |
+          cp "${{ steps.pack.outputs.file }}" agentcave-client.tgz
+          git tag -f client-latest "$GITHUB_SHA"
+          git push -f origin refs/tags/client-latest
+          gh release view client-latest > /dev/null 2>&1 \
+            || gh release create client-latest --prerelease --title "Client library (latest main)" --notes "Rebuilt on every push to main."
+          gh release edit client-latest --prerelease --notes "Rebuilt on every push to main. Last build: ${GITHUB_SHA::7}. For installs that never change under you, use a versioned release (vX.Y.Z)."
+          gh release upload client-latest agentcave-client.tgz --clobber

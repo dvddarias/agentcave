@@ -8,7 +8,9 @@ ARG ALPINE_IMAGE=alpine:3.24
 # ---------------------------------------------------------------------------
 # 1) Build everything (client types, web UI, server bundle)
 # ---------------------------------------------------------------------------
-FROM ${NODE_IMAGE} AS build
+# Runs on the build machine's own platform: its output (JS bundles, static UI) is the same for every
+# target architecture, so multi-arch builds don't have to emulate this heavy step.
+FROM --platform=$BUILDPLATFORM ${NODE_IMAGE} AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY client/package.json client/
@@ -47,7 +49,9 @@ RUN apk add --no-cache libstdc++ libgcc tini \
   && mkdir -p /data && chown cave:cave /data
 
 WORKDIR /app
-ENV NODE_ENV=production \
+ARG APP_VERSION=dev
+ENV AGENTCAVE_VERSION=${APP_VERSION} \
+    NODE_ENV=production \
     PORT=7420 \
     HOST=0.0.0.0 \
     DATA_DIR=/data \
