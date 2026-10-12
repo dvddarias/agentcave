@@ -14,6 +14,8 @@ export interface HttpDeps {
   version: string;
   startedAt: number;
   webDist: string | null;
+  /** Normalised path prefix the UI and API are published under (`/cave`), or `""` for the root. */
+  basePath: string;
   fetchImpl: typeof fetch;
 }
 

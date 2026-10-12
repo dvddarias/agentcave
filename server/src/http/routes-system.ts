@@ -55,7 +55,7 @@ export function systemRoutes(deps: HttpDeps): Hono {
 
   app.post("/maintenance/cleanup", async (c) => c.json(await deps.retention.runOnce()));
 
-  app.get("/openapi.json", (c) => c.json(buildOpenApi(deps.version)));
+  app.get("/openapi.json", (c) => c.json(buildOpenApi(deps.version, deps.basePath)));
 
   // Global feed: one event per changed cycle, batched every 500 ms.
   app.get("/events", (c) =>

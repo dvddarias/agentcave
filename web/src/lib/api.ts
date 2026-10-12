@@ -1,8 +1,21 @@
 import { AgentCave, AgentCaveError } from "@agentcave/client";
 import { QueryClient } from "@tanstack/react-query";
 
+declare global {
+  interface Window {
+    /** Set by the server in index.html (`BASE_PATH`); absent in Vite development. */
+    __AGENTCAVE_BASE__?: string;
+  }
+}
+
+/** Path prefix the UI and API are published under (e.g. `/cave`), or `""` at the root. */
+export const basePath = (window.__AGENTCAVE_BASE__ ?? "").replace(/\/+$/, "");
+
+/** Absolute URL of this AgentCave (e.g. `https://example.com/cave`), for examples people copy. */
+export const publicUrl = `${window.location.origin}${basePath}`;
+
 /** Same origin: the UI is served by AgentCave itself (Vite proxies /api in development). */
-export const api = new AgentCave({ baseUrl: "" });
+export const api = new AgentCave({ baseUrl: basePath });
 
 export const queryClient = new QueryClient({
   defaultOptions: {

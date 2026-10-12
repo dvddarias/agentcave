@@ -20,7 +20,7 @@ import {
   Textarea,
   Toggle,
 } from "../components/ui";
-import { api, keys } from "../lib/api";
+import { api, keys, publicUrl } from "../lib/api";
 import type { PickedFile } from "../lib/files";
 
 let labelSeq = 0;
@@ -297,7 +297,6 @@ function CurlModal({
   onClose: () => void;
   request: StartCycleRequest | null;
 }) {
-  const origin = typeof window !== "undefined" ? window.location.origin : "http://localhost:7420";
   const body = request
     ? JSON.stringify(
         {
@@ -311,7 +310,7 @@ function CurlModal({
         2,
       )
     : "{}";
-  const cmd = `curl -X POST ${origin}/api/v1/cycles \\\n  -H 'content-type: application/json' \\\n  -d '${body.replace(/'/g, "'\\''")}'`;
+  const cmd = `curl -X POST ${publicUrl}/api/v1/cycles \\\n  -H 'content-type: application/json' \\\n  -d '${body.replace(/'/g, "'\\''")}'`;
   return (
     <Modal open={open} onClose={onClose} title="The same request with curl" wide>
       <p className="mb-3 text-sm text-cave-400">

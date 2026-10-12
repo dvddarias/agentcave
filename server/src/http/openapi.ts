@@ -402,7 +402,7 @@ function jsonSchemaOf(schema: z.ZodType): Record<string, unknown> {
   }
 }
 
-export function buildOpenApi(version: string): Record<string, unknown> {
+export function buildOpenApi(version: string, basePath = ""): Record<string, unknown> {
   const paths: Record<string, Record<string, unknown>> = {};
   for (const r of ROUTES) {
     const op: Record<string, unknown> = {
@@ -449,7 +449,7 @@ export function buildOpenApi(version: string): Record<string, unknown> {
       description:
         "Start agentic cycles, poll or stream them, stop them, send follow-ups and download results. No authentication is built in: put your own proxy in front.",
     },
-    servers: [{ url: "/api/v1" }],
+    servers: [{ url: `${basePath}/api/v1` }],
     paths,
   };
 }

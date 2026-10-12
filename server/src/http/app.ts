@@ -6,15 +6,42 @@ import { bodyLimit } from "hono/body-limit";
 import { cors } from "hono/cors";
 import { HTTPException } from "hono/http-exception";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
+import { getPath } from "hono/utils/url";
 import { ApiError } from "../errors.js";
 import { log } from "../log.js";
+import { injectBasePath, normalizeBasePath, stripBasePath } from "./base-path.js";
 import { agentRoutes } from "./routes-agents.js";
 import { cycleRoutes } from "./routes-cycles.js";
 import { systemRoutes } from "./routes-system.js";
 import type { HttpDeps } from "./util.js";
 
 export function createHttpApp(deps: HttpDeps): Hono {
-  const app = new Hono();
+  const base = deps.basePath;
+  // Routes, middleware and static files all see the path without the prefix, whether or not the
+  // proxy in front stripped it.
+  const app = new Hono({ getPath: (req) => stripBasePath(getPath(req), base) });
+
+  // A proxy that publishes AgentCave under a prefix says so. If BASE_PATH disagrees, the UI loads
+  // its assets and API from the wrong place, so warn (once).
+  let warnedPrefix = false;
+  app.use("*", async (c, next) => {
+    const forwarded = c.req.header("x-forwarded-prefix");
+    if (forwarded !== undefined && !warnedPrefix) {
+      let prefix: string | null = null;
+      try {
+        prefix = normalizeBasePath(forwarded);
+      } catch {
+        // not a usable path: nothing to compare
+      }
+      if (prefix !== null && prefix !== base) {
+        warnedPrefix = true;
+        log.warn(
+          `The proxy publishes AgentCave under X-Forwarded-Prefix "${forwarded}" but BASE_PATH is "${base}": set BASE_PATH=${prefix || "/"}`,
+        );
+      }
+    }
+    await next();
+  });
 
   app.use("/api/*", cors({ origin: "*", exposeHeaders: ["content-disposition"] }));
   app.use("/api/*", async (c, next) => {
@@ -68,8 +95,11 @@ export function createHttpApp(deps: HttpDeps): Hono {
   const webDist = deps.webDist;
   const indexFile = webDist ? path.join(webDist, "index.html") : null;
   // Read on every request (it is tiny) so a rebuilt UI is picked up without a restart.
-  const readIndex = () => (indexFile && existsSync(indexFile) ? readFileSync(indexFile, "utf8") : null);
+  const readIndex = () =>
+    indexFile && existsSync(indexFile) ? injectBasePath(readFileSync(indexFile, "utf8"), base) : null;
   if (webDist && readIndex()) {
+    // Never the raw file (it has no base in it): the fallback below serves it with the base.
+    app.get("/index.html", (c) => c.notFound());
     app.use("/assets/*", serveStatic({ root: path.relative(process.cwd(), webDist) || "." }));
     app.use("/*", serveStatic({ root: path.relative(process.cwd(), webDist) || ".", index: "__none__" }));
   }
@@ -79,7 +109,8 @@ export function createHttpApp(deps: HttpDeps): Hono {
       return c.json({ error: { code: "not_found", message: `No route ${c.req.method} ${c.req.path}` } }, 404);
     }
     const indexHtml = c.req.method === "GET" ? readIndex() : null;
-    if (indexHtml) return c.html(indexHtml);
+    // no-cache: the page carries the runtime base path.
+    if (indexHtml) return c.html(indexHtml, 200, { "cache-control": "no-cache" });
     return c.text(
       "AgentCave API is running. The web UI is not built (run `npm run build -w @agentcave/web`). API: /api/v1",
       404,

@@ -40,7 +40,10 @@ export class AgentCaveError extends Error {
 }
 
 export interface AgentCaveOptions {
-  /** e.g. `http://localhost:7420`. Use `""` in a browser served by AgentCave itself. */
+  /**
+   * e.g. `http://localhost:7420`, or `https://example.com/cave` when a proxy publishes AgentCave
+   * under a path prefix. Use `""` (or the prefix, e.g. `"/cave"`) in a browser served by AgentCave itself.
+   */
   baseUrl: string;
   /** Extra headers on every request (e.g. for your own proxy auth). */
   headers?: Record<string, string>;

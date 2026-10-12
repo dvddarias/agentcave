@@ -15,6 +15,8 @@ services:
       - agentcave-data:/data
     environment:
       LOG_LEVEL: info
+      # Behind a reverse proxy under a path prefix (e.g. https://example.com/cave/): see the README.
+      # BASE_PATH: /cave
     stop_grace_period: 20s
 
 volumes:

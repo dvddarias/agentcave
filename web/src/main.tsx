@@ -1,10 +1,10 @@
 import { QueryClientProvider } from "@tanstack/react-query";
 import { lazy, StrictMode, Suspense } from "react";
 import { createRoot } from "react-dom/client";
-import { createBrowserRouter, Navigate, RouterProvider } from "react-router";
+import { createBrowserRouter, Navigate, type RouteObject, RouterProvider } from "react-router";
 import { Layout } from "./components/Layout";
 import { Spinner } from "./components/ui";
-import { queryClient } from "./lib/api";
+import { basePath, queryClient } from "./lib/api";
 import { AgentsPage } from "./pages/AgentsPage";
 import { CyclePage } from "./pages/CyclePage";
 import { CyclesPage } from "./pages/CyclesPage";
@@ -33,7 +33,7 @@ const load = (el: React.ReactNode) => (
   </Suspense>
 );
 
-const router = createBrowserRouter([
+const routes: RouteObject[] = [
   {
     element: <Layout />,
     children: [
@@ -53,7 +53,10 @@ const router = createBrowserRouter([
       },
     ],
   },
-]);
+];
+
+// Under a proxy prefix (BASE_PATH) every route lives below it: /cave/cycles/…
+const router = createBrowserRouter(routes, { basename: basePath || "/" });
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

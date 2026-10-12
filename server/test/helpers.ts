@@ -116,6 +116,8 @@ export async function createTestCave(
 
   const cave = await createAgentCave({
     dataDir,
+    webDist: opts.webDist,
+    basePath: opts.basePath,
     modelFactory,
     fetchImpl: opts.fetchImpl ?? (async () => new Response(JSON.stringify({ data: [] }), { status: 200 })),
     webhookBackoffMs: opts.webhookBackoffMs ?? [50, 50],

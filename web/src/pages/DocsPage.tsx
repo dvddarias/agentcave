@@ -4,7 +4,7 @@ import typesSource from "../../../client/src/types.ts?raw";
 import { IconChevron } from "../components/icons";
 import { CodeBlock } from "../components/Markdown";
 import { Card, cx, PageHeader, Pill, Tabs } from "../components/ui";
-import { api, keys } from "../lib/api";
+import { api, keys, publicUrl } from "../lib/api";
 
 interface OpenApiOp {
   tags: string[];
@@ -27,7 +27,7 @@ type Section = "guide" | "reference" | "types";
 
 export function DocsPage() {
   const [section, setSection] = useState<Section>("guide");
-  const base = `${window.location.origin}/api/v1`;
+  const base = `${publicUrl}/api/v1`;
   return (
     <div className="max-w-5xl">
       <PageHeader
@@ -36,7 +36,7 @@ export function DocsPage() {
           <>
             Base URL <code className="font-mono text-cave-200">{base}</code> · JSON everywhere · no
             authentication built in (put your own proxy in front) ·{" "}
-            <a className="text-torch-400 hover:underline" href="/api/v1/openapi.json">
+            <a className="text-torch-400 hover:underline" href={api.url("/openapi.json")}>
               openapi.json
             </a>
           </>
@@ -189,7 +189,7 @@ function isFromAgentCave(rawBody: string, header: string | undefined, secret: st
           lang="typescript"
           code={`import { AgentCave } from "@agentcave/client";
 
-const cave = new AgentCave({ baseUrl: "${window.location.origin}" });
+const cave = new AgentCave({ baseUrl: "${publicUrl}" });
 const { id } = await cave.cycles.start({ agent: "code-reviewer", prompt: "Review this", files });
 
 for await (const ev of cave.cycles.events(id)) {

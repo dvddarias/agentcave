@@ -10,6 +10,7 @@ import { Runner } from "./engine/runner.js";
 import { Scheduler } from "./engine/scheduler.js";
 import { EventHub } from "./events.js";
 import { createHttpApp } from "./http/app.js";
+import { normalizeBasePath } from "./http/base-path.js";
 import { ModelCatalog } from "./models.js";
 import { type ModelFactory, openRouterModelFactory } from "./openrouter.js";
 import { RetentionService } from "./retention.js";
@@ -17,12 +18,14 @@ import { SettingsService } from "./settings.js";
 import { WebhookService } from "./webhooks.js";
 
 /** Set by the Docker build (git tag, or `main-<sha>`); falls back to the package version in development. */
-export const VERSION = process.env.AGENTCAVE_VERSION || "0.1.0-dev";
+export const VERSION = process.env.AGENTCAVE_VERSION || "0.2.0-dev";
 
 export interface AgentCaveOptions {
   dataDir: string;
   /** Directory with the built web UI (index.html). */
   webDist?: string | null;
+  /** Path prefix a reverse proxy publishes AgentCave under (`BASE_PATH`, e.g. `/cave`). Default: the root. */
+  basePath?: string;
   modelFactory?: ModelFactory & { requiresToken?: boolean };
   fetchImpl?: typeof fetch;
   webhookBackoffMs?: number[];
@@ -67,6 +70,7 @@ export async function createAgentCave(opts: AgentCaveOptions) {
     version: VERSION,
     startedAt: Date.now(),
     webDist: opts.webDist ?? null,
+    basePath: normalizeBasePath(opts.basePath),
     fetchImpl,
   });
 

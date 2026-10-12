@@ -72,7 +72,7 @@ Demo mode uses a scripted fake model ($0). It creates two sample agents (a code 
 
 ## API
 
-Base URL `http://<host>:7420/api/v1`. The UI has a full **API Docs** page (curl recipes, every endpoint, the TypeScript types). The OpenAPI spec is at `/api/v1/openapi.json`.
+Base URL `http://<host>:7420/api/v1` (with `BASE_PATH`: `…/<prefix>/api/v1`). The UI has a full **API Docs** page (curl recipes, every endpoint, the TypeScript types). The OpenAPI spec is at `/api/v1/openapi.json`.
 
 | | |
 |---|---|
@@ -93,7 +93,7 @@ Base URL `http://<host>:7420/api/v1`. The UI has a full **API Docs** page (curl 
 
 ```bash
 # a fixed version (recommended: it never changes under you)
-npm install https://github.com/dvddarias/agentcave/releases/download/v0.1.0/agentcave-client-0.1.0.tgz
+npm install https://github.com/dvddarias/agentcave/releases/download/v0.2.0/agentcave-client-0.2.0.tgz
 # or the build of the latest push to main
 npm install https://github.com/dvddarias/agentcave/releases/download/client-latest/agentcave-client.tgz
 ```
@@ -119,8 +119,38 @@ Environment variables (everything else is in the **Settings** page and stored in
 | `DATA_DIR` | `/data` (Docker), `./data` (local) | SQLite DB, file store, workspaces |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 | `WEB_DIST` | auto | folder with the built UI |
+| `BASE_PATH` | *(empty: the root)* | path prefix a reverse proxy publishes AgentCave under, e.g. `/cave` (see below) |
 
 `/data` contains `agentcave.db` (SQLite, WAL), `blobs/` (content-addressed files), `cycles/<id>/workspace/` and `agents/<version>/`. Back up the whole folder. Finished cycles are deleted after *N* days (Settings; 0 = keep forever).
+
+### Under a path prefix (reverse proxy)
+
+To publish AgentCave at e.g. `https://example.com/cave/` on a domain that also serves another site, set `BASE_PATH=/cave`. The UI, its assets and the API then all live under the prefix (`/cave/cycles/…`, `/cave/assets/…`, `/cave/api/v1/…`), and nothing is requested from the root of the domain.
+
+The prefix is read at startup, not baked into the build, so the same image works under any prefix (or none). The proxy may strip the prefix before forwarding or keep it: both work. Caddy:
+
+```caddy
+example.com {
+	redir /cave /cave/
+	handle_path /cave/* {
+		reverse_proxy agentcave:7420 {
+			header_up X-Forwarded-Prefix /cave
+		}
+	}
+
+	# …the other site at the root
+}
+```
+
+```yaml
+services:
+  agentcave:
+    image: ghcr.io/dvddarias/agentcave:0.2.0
+    environment:
+      BASE_PATH: /cave
+```
+
+API clients then use `https://example.com/cave/api/v1` (TypeScript client: `new AgentCave({ baseUrl: "https://example.com/cave" })`). If the proxy sends an `X-Forwarded-Prefix` that doesn't match `BASE_PATH`, AgentCave logs a warning.
 
 ## Development
 

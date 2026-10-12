@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { serve } from "@hono/node-server";
 import { createAgentCave, VERSION } from "./app.js";
+import { normalizeBasePath } from "./http/base-path.js";
 import { log, setLogLevel } from "./log.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -23,16 +24,18 @@ async function main(): Promise<void> {
   const hostname = process.env.HOST ?? "0.0.0.0";
   const dataDir = process.env.DATA_DIR ?? path.resolve("data");
   const webDist = findWebDist();
+  const basePath = normalizeBasePath(process.env.BASE_PATH);
 
-  const cave = await createAgentCave({ dataDir, webDist });
+  const cave = await createAgentCave({ dataDir, webDist, basePath });
   cave.start();
 
   const server = serve({ fetch: cave.app.fetch, port, hostname }, (info) => {
     log.info(
-      `AgentCave ${VERSION} listening on http://${hostname === "0.0.0.0" ? "localhost" : hostname}:${info.port}`,
+      `AgentCave ${VERSION} listening on http://${hostname === "0.0.0.0" ? "localhost" : hostname}:${info.port}${basePath}`,
       {
         dataDir,
         ui: webDist ? "enabled" : "not built",
+        ...(basePath ? { basePath } : {}),
       },
     );
   });

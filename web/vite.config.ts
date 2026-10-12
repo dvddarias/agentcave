@@ -5,6 +5,9 @@ import { defineConfig } from "vite";
 const api = process.env.AGENTCAVE_API ?? "http://localhost:7420";
 
 export default defineConfig({
+  // Relative asset URLs: one build works under any prefix. The server decides the prefix at runtime
+  // (BASE_PATH) and adds a matching <base href> to index.html.
+  base: "./",
   plugins: [react(), tailwindcss()],
   resolve: { conditions: ["agentcave-source"] },
   server: {

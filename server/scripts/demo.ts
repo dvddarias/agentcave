@@ -14,6 +14,7 @@ import { serve } from "@hono/node-server";
 import { simulateReadableStream } from "ai";
 import { MockLanguageModelV4 } from "ai/test";
 import { createAgentCave } from "../src/app.js";
+import { normalizeBasePath } from "../src/http/base-path.js";
 import { log } from "../src/log.js";
 import type { ModelRequest } from "../src/openrouter.js";
 
@@ -178,6 +179,7 @@ async function main() {
   const cave = await createAgentCave({
     dataDir,
     webDist: existsSync(path.join(webDist, "index.html")) ? webDist : null,
+    basePath: process.env.BASE_PATH,
     modelFactory: Object.assign(demoModel, { requiresToken: false }),
   });
   const agents = cave.ctx.agents;
@@ -216,7 +218,10 @@ async function main() {
   cave.start();
   const port = Number(process.env.PORT ?? 7420);
   serve({ fetch: cave.app.fetch, port }, () => {
-    log.info(`AgentCave DEMO on http://localhost:${port} (fake model, no token needed)`, { dataDir });
+    log.info(
+      `AgentCave DEMO on http://localhost:${port}${normalizeBasePath(process.env.BASE_PATH)} (fake model, no token needed)`,
+      { dataDir },
+    );
   });
   if (process.env.DEMO_AUTOSTART !== "0") {
     setTimeout(async () => {
