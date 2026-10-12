@@ -241,6 +241,7 @@ export class Runner {
       reasoning: cycle.reasoning,
       supportsReasoning: models.get(cycle.model)?.supportsReasoning,
       token: settings.openrouterToken,
+      sessionId: cycle.root_id,
     });
 
     const agent = new ToolLoopAgent({

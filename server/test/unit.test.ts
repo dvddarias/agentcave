@@ -6,6 +6,7 @@ import { Budget } from "../src/engine/budget.js";
 import { findCut, ParagraphChunker } from "../src/engine/chunker.js";
 import { buildSystemPrompt, buildUserMessage, subagentToolName } from "../src/engine/prompt.js";
 import { maybeTrim } from "../src/engine/trim.js";
+import { needsExplicitCaching, openRouterChatSettings } from "../src/openrouter.js";
 import { normalizeRelPath } from "../src/paths.js";
 import { mergeLimits } from "../src/settings.js";
 
@@ -203,5 +204,28 @@ describe("diffManifests", () => {
         { a: { sha256: "1", size: 1 }, b: { sha256: "3", size: 1 }, c: { sha256: "4", size: 1 } },
       ),
     ).toEqual({ added: ["c"], modified: ["b"], deleted: [] });
+  });
+});
+
+describe("OpenRouter chat settings", () => {
+  const req = { reasoning: "medium" as const, token: "t", sessionId: "cyc_ROOT" };
+
+  it("sends the run's session_id for every model", () => {
+    for (const modelId of ["anthropic/claude-haiku-5.5", "deepseek/deepseek-v4.1-flash"]) {
+      expect(openRouterChatSettings({ ...req, modelId }).extraBody).toEqual({ session_id: "cyc_ROOT" });
+    }
+  });
+
+  it("turns on automatic prompt caching for Claude models only", () => {
+    expect(openRouterChatSettings({ ...req, modelId: "anthropic/claude-haiku-5.5" }).cache_control).toEqual({
+      type: "ephemeral",
+    });
+    expect(
+      openRouterChatSettings({ ...req, modelId: "~anthropic/claude-sonnet-latest" }).cache_control,
+    ).toBeDefined();
+    expect(
+      openRouterChatSettings({ ...req, modelId: "deepseek/deepseek-v4.1-flash" }).cache_control,
+    ).toBeUndefined();
+    expect(needsExplicitCaching("openai/gpt-5.6")).toBe(false);
   });
 });

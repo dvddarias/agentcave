@@ -1,5 +1,5 @@
 import type { ReasoningEffort, TokenCheck } from "@agentcave/client";
-import { createOpenRouter } from "@openrouter/ai-sdk-provider";
+import { createOpenRouter, type OpenRouterChatSettings } from "@openrouter/ai-sdk-provider";
 import type { LanguageModel } from "ai";
 
 export interface ModelRequest {
@@ -8,6 +8,29 @@ export interface ModelRequest {
   /** From the model catalog. `false` → no reasoning settings are sent at all. Unknown → sent. */
   supportsReasoning?: boolean;
   token: string | null;
+  /**
+   * OpenRouter `session_id`: groups every request of one run (sub-agents included) in the
+   * OpenRouter logs, and is the sticky-routing key that keeps a run on one provider (warm cache).
+   */
+  sessionId: string;
+}
+
+/** Claude models only cache when asked; OpenAI, DeepSeek, Gemini, … cache on their own. */
+export function needsExplicitCaching(modelId: string): boolean {
+  return /^~?anthropic\//.test(modelId);
+}
+
+export function openRouterChatSettings(req: ModelRequest): OpenRouterChatSettings {
+  return {
+    usage: { include: true },
+    // Top-level `cache_control` = Anthropic automatic caching: the breakpoint moves to the end
+    // of the conversation on every step, so each step reads the previous step's prefix.
+    ...(needsExplicitCaching(req.modelId) ? { cache_control: { type: "ephemeral" as const } } : {}),
+    ...(req.supportsReasoning === false
+      ? {}
+      : { reasoning: req.reasoning === "off" ? { effort: "none" as const } : { effort: req.reasoning } }),
+    extraBody: { session_id: req.sessionId },
+  };
 }
 
 /** Creates the language model for a run. Tests inject a fake one. */
@@ -24,12 +47,7 @@ export const openRouterModelFactory: ModelFactory & TokenRequirement = Object.as
       compatibility: "strict",
       appName: "AgentCave",
     });
-    return provider.chat(req.modelId, {
-      usage: { include: true },
-      ...(req.supportsReasoning === false
-        ? {}
-        : { reasoning: req.reasoning === "off" ? { effort: "none" as const } : { effort: req.reasoning } }),
-    });
+    return provider.chat(req.modelId, openRouterChatSettings(req));
   },
   { requiresToken: true },
 );
