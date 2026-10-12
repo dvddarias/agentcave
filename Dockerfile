@@ -1,9 +1,14 @@
 # syntax=docker/dockerfile:1.7
 
+# Node and Alpine are pinned together: the runtime stage copies the Node binary
+# from the node image onto the same Alpine release.
+ARG NODE_IMAGE=node:24-alpine3.24
+ARG ALPINE_IMAGE=alpine:3.24
+
 # ---------------------------------------------------------------------------
 # 1) Build everything (client types, web UI, server bundle)
 # ---------------------------------------------------------------------------
-FROM node:24-alpine AS build
+FROM ${NODE_IMAGE} AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY client/package.json client/
@@ -16,7 +21,7 @@ RUN npm run build
 # ---------------------------------------------------------------------------
 # 2) Production dependencies of the server only
 # ---------------------------------------------------------------------------
-FROM node:24-alpine AS deps
+FROM ${NODE_IMAGE} AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY client/package.json client/
@@ -31,10 +36,13 @@ RUN npm ci --omit=dev --no-audit --no-fund --workspace @agentcave/server --inclu
   && npm cache clean --force
 
 # ---------------------------------------------------------------------------
-# 3) Runtime
+# 3) Runtime: plain Alpine + the Node binary (no npm/yarn, ~25 MB smaller)
 # ---------------------------------------------------------------------------
-FROM node:24-alpine
-RUN apk add --no-cache tini \
+FROM ${NODE_IMAGE} AS node
+
+FROM ${ALPINE_IMAGE}
+COPY --from=node /usr/local/bin/node /usr/local/bin/node
+RUN apk add --no-cache libstdc++ libgcc tini \
   && addgroup -S cave && adduser -S -G cave -h /home/cave cave \
   && mkdir -p /data && chown cave:cave /data
 
