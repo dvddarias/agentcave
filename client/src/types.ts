@@ -240,6 +240,23 @@ export interface CycleError {
   message: string;
 }
 
+/** Errors after which the turn can be continued with `POST /cycles/:id/continue`. */
+export const CONTINUABLE_ERRORS: readonly ErrorCode[] = [
+  "limit_time",
+  "limit_money",
+  "limit_tokens",
+  "limit_steps",
+];
+
+/** What a turn has used, counted the way `Limits` count it (sub-agents included). */
+export interface LimitUsage {
+  /** Running time; time spent waiting in the queue or stopped does not count. */
+  timeSec: number;
+  costUsd: number;
+  /** Input + output tokens. */
+  tokens: number;
+}
+
 export interface Usage {
   inputTokens: number;
   outputTokens: number;
@@ -289,6 +306,25 @@ export interface RerunRequest {
   webhookUrl?: string | null;
 }
 
+/**
+ * Body of `POST /cycles/:id/continue`: resume a turn that a limit stopped (see `CONTINUABLE_ERRORS`),
+ * from where it stopped, with the same memory and files. Its usage so far keeps counting.
+ */
+export interface ContinueRequest {
+  /**
+   * New limits, merged over the current ones (`null` removes a limit). They are totals for the whole
+   * turn, so they must be above what it already used (`Cycle.limitUsage`). They stay for later turns.
+   */
+  limits?: Limits;
+  /**
+   * Every limit that has no room left and is not set in `limits` (normally the one that stopped the
+   * turn) gets this percentage of itself as new room. Default 50.
+   */
+  extendPercent?: number;
+  /** Extra instructions for the agent, added to the message that tells it to continue. */
+  message?: string;
+}
+
 export interface CycleProgress {
   steps: number;
   /** Short human text: "running bash: grep -rn TODO src/". */
@@ -322,6 +358,8 @@ export interface Cycle {
   usage: Usage;
   /** Own usage + every sub-agent below it. */
   totalUsage: { inputTokens: number; outputTokens: number; costUsd: number };
+  /** What the latest turn has used against `limits`. */
+  limitUsage: LimitUsage;
   /** Latest turn's answer. */
   answer: Answer | null;
   /** Latest turn's file changes. */
@@ -347,6 +385,8 @@ export interface Turn {
   files: FileChanges | null;
   error: CycleError | null;
   usage: Usage;
+  /** What this turn has used against the limits. */
+  limitUsage: LimitUsage;
   nudges: number;
   startedAt: string | null;
   finishedAt: string | null;
@@ -403,6 +443,14 @@ export type CycleEventPayload =
         model: string;
         reasoning: ReasoningEffort;
       };
+    }
+  /**
+   * A turn stopped by a limit runs again from where it stopped (`POST /cycles/:id/continue`).
+   * `used` is what the turn had used before this run; `message` is what the agent was told.
+   */
+  | {
+      type: "turn.continue";
+      data: { after: CycleError; limits: Limits; used: LimitUsage; message: string };
     }
   | { type: "step.start"; data: { step: number } }
   /** A slice of thinking. Concatenate all slices with the same `blockId` to get the full text. */

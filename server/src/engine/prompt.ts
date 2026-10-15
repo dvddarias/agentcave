@@ -107,3 +107,32 @@ export function buildUserMessage(prompt: string, files: Manifest): string {
   const more = paths.length > 200 ? `\n- … and ${paths.length - 200} more` : "";
   return `${prompt}\n\n---\nFiles provided in /workspace (${paths.length}):\n${shown.join("\n")}${more}`;
 }
+
+function joinWords(items: string[]): string {
+  return items.length < 2 ? (items[0] ?? "") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
+}
+
+/** The user message that resumes a turn a limit stopped. */
+export function buildContinueMessage(o: {
+  /** Why the previous run stopped, e.g. "Time limit reached (600s)". */
+  reason: string;
+  /** What is left under each limit (see `roomLeft`). */
+  room: string[];
+  /** Steps this run may take, when the previous run hit the step cap. */
+  steps: number | null;
+  /** The turn's earlier steps were not saved (turns that stopped before AgentCave kept them). */
+  historyLost: boolean;
+  note?: string;
+}): string {
+  const room = [...o.room, ...(o.steps ? [`up to ${o.steps} more steps`] : [])];
+  const lines = [
+    `You were stopped before you finished. ${o.reason}. The user gave you more room to finish: ${room.length ? `you now have ${joinWords(room)}` : "there is no time, money or token limit now"}.`,
+    "",
+    o.historyLost
+      ? "Your notes from earlier in this task were not kept, so first look at `/workspace` to see what is already done, then carry on from there instead of starting over."
+      : "Carry on from where you left off; do not start over. Anything that was still running when you were stopped (a command or a sub-agent) may not have finished, so check its result before you rely on it.",
+    "Finish the task and call `submit_answer` before you run out again.",
+  ];
+  if (o.note?.trim()) lines.push("", "Message from the user:", o.note.trim());
+  return lines.join("\n");
+}

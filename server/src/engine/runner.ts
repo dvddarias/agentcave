@@ -24,7 +24,7 @@ import { z } from "zod";
 import { diffManifests, type Manifest } from "../blobs.js";
 import type { Ctx } from "../context.js";
 import { newCycleParams } from "../cycle-factory.js";
-import { type CycleRow, rowUsage, type TurnRow } from "../cycle-store.js";
+import { type CycleRow, limitUsage, type Resume, rowUsage, type TurnRow } from "../cycle-store.js";
 import { parseJson } from "../db.js";
 import { log } from "../log.js";
 import type { InternalSettings } from "../settings.js";
@@ -62,6 +62,9 @@ interface LoopCtx {
   budget: Budget;
   ancestors: string[];
   emit: (p: CycleEventPayload) => void;
+  /** Set when this run continues a turn that a limit stopped. */
+  resume: Resume | null;
+  /** Step and reminder counters of the turn; they carry on across the runs of a continued turn. */
   state: { steps: number; nudges: number };
 }
 
@@ -88,6 +91,7 @@ export class Runner {
     const workspace = this.workspaceDir(cycle.id);
     const inputManifest = parseJson<Manifest>(turn.input_manifest, {});
     let startSnapshot = parseJson<Manifest | null>(turn.start_snapshot, null);
+    const resume = parseJson<Resume | null>(turn.resume, null);
 
     cycles.markRunning(cycle.id, turn.id);
     emit({ type: "cycle.status", data: { status: "running", error: null } });
@@ -97,14 +101,21 @@ export class Runner {
     if (opts.signal.aborted) ac.abort(opts.signal.reason);
     else opts.signal.addEventListener("abort", onParentAbort, { once: true });
 
+    // A continued turn starts with what its earlier runs used (zero otherwise).
     const limits = parseJson<Limits>(cycle.limits, {});
-    const budget = new Budget(limits, opts.parentBudget ?? null);
+    const budget = new Budget(limits, opts.parentBudget ?? null, {
+      costUsd: turn.spent_usd,
+      tokens: turn.spent_tokens,
+    });
+    const runStarted = Date.now();
+    let elapsedMs = turn.elapsed_ms;
     const timer = limits.maxTimeSec
       ? setTimeout(
           () => ac.abort(new RunAbort("limit_time", `Time limit reached (${limits.maxTimeSec}s)`)),
-          limits.maxTimeSec * 1000,
+          Math.max(0, limits.maxTimeSec * 1000 - turn.elapsed_ms),
         )
       : null;
+    const state = { steps: turn.last_step, nudges: turn.nudges };
 
     let answer: Answer | null = null;
     let status: CycleStatus = "failed";
@@ -114,8 +125,12 @@ export class Runner {
       if (this.ctx.modelFactory.requiresToken && !settings.openrouterToken) {
         throw new RunError("no_token", "The OpenRouter token is not set. Add it in Settings.");
       }
-      await fs.mkdir(workspace, { recursive: true });
-      if (startSnapshot) {
+      const created = await fs.mkdir(workspace, { recursive: true });
+      if (resume) {
+        // Continue: the workspace stays as the previous run left it (restored if it went missing).
+        if (created && turn.end_snapshot)
+          await blobs.materialize(workspace, parseJson<Manifest>(turn.end_snapshot, {}));
+      } else if (startSnapshot) {
         // Restart: put the workspace back exactly as it was when this turn first started.
         await blobs.materialize(workspace, startSnapshot, { clean: true });
       } else {
@@ -123,16 +138,23 @@ export class Runner {
         startSnapshot = await blobs.snapshotDir(workspace);
         cycles.setStartSnapshot(turn.id, startSnapshot);
       }
-      emit({
-        type: "turn.start",
-        data: {
-          prompt: turn.prompt,
-          files: Object.keys(inputManifest).sort(),
-          systemPrompt: cycle.system_prompt,
-          model: cycle.model,
-          reasoning: cycle.reasoning,
-        },
-      });
+      if (resume) {
+        emit({
+          type: "turn.continue",
+          data: { after: resume.after, limits, used: limitUsage(turn, false), message: resume.message },
+        });
+      } else {
+        emit({
+          type: "turn.start",
+          data: {
+            prompt: turn.prompt,
+            files: Object.keys(inputManifest).sort(),
+            systemPrompt: cycle.system_prompt,
+            model: cycle.model,
+            reasoning: cycle.reasoning,
+          },
+        });
+      }
       answer = await this.loop({
         cycle,
         turn,
@@ -143,7 +165,8 @@ export class Runner {
         budget,
         ancestors: cycles.ancestorIds(cycle),
         emit,
-        state: { steps: 0, nudges: 0 },
+        resume,
+        state,
       });
       status = "completed";
     } catch (err) {
@@ -160,6 +183,10 @@ export class Runner {
     } finally {
       if (timer) clearTimeout(timer);
       opts.signal.removeEventListener("abort", onParentAbort);
+      elapsedMs += Date.now() - runStarted;
+      // The time limit stopped it: it used exactly the time it had (the rest is stopping).
+      if (error?.code === "limit_time" && limits.maxTimeSec)
+        elapsedMs = Math.min(elapsedMs, limits.maxTimeSec * 1000);
     }
 
     let endSnapshot: Manifest | null = null;
@@ -171,7 +198,15 @@ export class Runner {
       log.warn("Could not snapshot workspace", { cycle: cycle.id, err });
     }
 
-    cycles.finishTurn(turn.id, { status, answer, changes, endSnapshot, error });
+    cycles.finishTurn(turn.id, {
+      status,
+      answer,
+      changes,
+      endSnapshot,
+      error,
+      elapsedMs,
+      lastStep: state.steps,
+    });
     cycles.finishCycle(cycle.id, status, error);
     if (answer) emit({ type: "answer", data: { answer, files: changes ?? EMPTY_CHANGES } });
     if (error) emit({ type: "error", data: error });
@@ -193,6 +228,9 @@ export class Runner {
   private async loop(c: LoopCtx): Promise<Answer> {
     const { cycle, turn, settings, ac, budget, emit, state } = c;
     const { agents, models, cycles } = this.ctx;
+    // The step cap and the reminders count per run, so a continued turn gets them afresh.
+    const start = { ...state };
+    const stepCapHit = () => state.steps - start.steps >= settings.hardStepCap;
 
     const version = agents.getVersionById(cycle.agent_version_id);
     const config = agents.config(version);
@@ -249,11 +287,7 @@ export class Runner {
       instructions: cycle.system_prompt,
       tools,
       maxRetries: 2,
-      stopWhen: [
-        () => submitted !== null,
-        () => state.steps >= settings.hardStepCap,
-        () => budget.exceeded() !== null,
-      ],
+      stopWhen: [() => submitted !== null, stepCapHit, () => budget.exceeded() !== null],
       prepareStep: ({ messages }) => {
         const r = maybeTrim(messages, {
           contextLength,
@@ -270,15 +304,36 @@ export class Runner {
     });
 
     const prior = cycles.priorMessages(cycle.id, turn.idx);
-    const turnMessages: ModelMessage[] = [
-      { role: "user", content: buildUserMessage(turn.prompt, c.inputManifest) },
-    ];
+    // A continued turn picks up its own conversation, then is told to carry on.
+    const saved = c.resume ? parseJson<ModelMessage[]>(turn.messages, []) : [];
+    const turnMessages: ModelMessage[] = saved.length
+      ? saved
+      : [{ role: "user", content: buildUserMessage(turn.prompt, c.inputManifest) }];
+    if (c.resume) turnMessages.push({ role: "user", content: c.resume.message });
     cycles.saveMessages(turn.id, turnMessages, state.nudges);
 
     for (;;) {
-      const result = await agent.stream({ messages: [...prior, ...turnMessages], abortSignal: ac.signal });
-      const streamError = await this.consume(result.fullStream, c);
-      if (ac.signal.aborted) throw ac.signal.reason;
+      // Messages of the steps finished in this call, kept when the run is cut short (time limit, stop)
+      // so that a continued turn can pick up from the last finished step.
+      const finished: ModelMessage[] = [];
+      const result = await agent.stream({
+        messages: [...prior, ...turnMessages],
+        abortSignal: ac.signal,
+        onStepEnd: (s) => {
+          finished.push(...s.response.messages);
+        },
+      });
+      let streamError: unknown = null;
+      try {
+        streamError = await this.consume(result.fullStream, c);
+      } catch (err) {
+        if (!ac.signal.aborted) throw err;
+      }
+      if (ac.signal.aborted) {
+        turnMessages.push(...finished);
+        cycles.saveMessages(turn.id, turnMessages, state.nudges);
+        throw ac.signal.reason;
+      }
 
       const response = await settle(result.responseMessages, 10_000);
       if (response) turnMessages.push(...response);
@@ -288,13 +343,14 @@ export class Runner {
       if (streamError) throw modelError(streamError);
       const hit = budget.exceeded();
       if (hit) throw new RunError(hit.code, hit.message);
-      if (state.steps >= settings.hardStepCap) {
+      if (stepCapHit()) {
         throw new RunError("limit_steps", `Step limit reached (${settings.hardStepCap} steps)`);
       }
-      if (state.nudges >= settings.maxNudges) {
+      const reminders = state.nudges - start.nudges;
+      if (reminders >= settings.maxNudges) {
         throw new RunError(
           "no_submit",
-          `The agent stopped without calling submit_answer (after ${state.nudges} reminder${state.nudges === 1 ? "" : "s"}).`,
+          `The agent stopped without calling submit_answer (after ${reminders} reminder${reminders === 1 ? "" : "s"}).`,
         );
       }
       state.nudges++;

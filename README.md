@@ -60,7 +60,9 @@ Demo mode uses a scripted fake model ($0). It creates two sample agents (a code 
 
 **Finishing.** The agent must call the `submit_answer` tool. If it stops without calling it, AgentCave sends it a reminder and the loop continues (3 reminders by default, then `no_submit`). With a JSON Schema (agent default or per call), `submit_answer` only accepts a matching object. Invalid answers go back to the model as tool errors.
 
-**Limits.** Time, money and tokens, per turn, with sub-agents included. Hitting one ends the turn with `limit_time`, `limit_money` or `limit_tokens`. Money is checked after each step, so it can go over by at most one step. A hidden step cap (500) is the last safety net.
+**Limits.** Time, money and tokens, per turn, with sub-agents included. Hitting one ends the turn with `limit_time`, `limit_money` or `limit_tokens`. Money is checked after each step, so it can go over by at most one step. A hidden step cap (500 per run) is the last safety net (`limit_steps`).
+
+**Continuing after a limit.** When a limit stops a turn that was nearly done, you don't have to start over: **Continue** (in the UI, or `POST /cycles/:id/continue`) raises the limit and the same turn runs on from its last finished step, with the same memory and files. What the turn already used still counts, so "+50%" means 50% of the limit as new room. Work that was cut off mid-step (a running command or sub-agent) is lost, and the agent is told to check it. The raised limits stay on the cycle for later follow-ups.
 
 **Long cycles.** When the prompt goes over 60% of the model's context, old tool outputs are cut down to short previews. A single command's output is always capped (30 KB). The full text is saved under `/tmp/agentcave/` so the agent can still `grep` it.
 
@@ -81,19 +83,20 @@ Base URL `http://<host>:7420/api/v1` (with `BASE_PATH`: `…/<prefix>/api/v1`). 
 | `GET /cycles/:id/events` | live SSE (or `?format=json`) |
 | `POST /cycles/:id/stop` | stop (sub-agents too) |
 | `POST /cycles/:id/messages` | follow-up `{ prompt, files? }` |
+| `POST /cycles/:id/continue` | after a limit: run the same turn on with more room `{ limits?, extendPercent?, message? }` (empty body = +50%) |
 | `POST /cycles/:id/rerun` | same input as a new cycle, optional overrides |
 | `GET /cycles/:id/files[/path]`, `/files.zip` | workspace files (`?changed=true`) |
 | `GET /cycles?agent=&status=&label.k=v` | list |
 | `/agents…` | create, update (new version), versions, restore, export/import `.md`/`.zip` |
 | `/settings`, `/models`, `/stats`, `/health` | the rest |
 
-**Webhooks.** At the end of every turn: `POST webhookUrl` with `{ event: "cycle.completed" | "cycle.failed" | "cycle.stopped", turn, sentAt, cycle }`. Failed deliveries are retried 5 times with backoff. If you set a signing secret in Settings, each call has `X-AgentCave-Signature: sha256=<hmac of the body>`.
+**Webhooks.** At the end of every turn: `POST webhookUrl` with `{ event: "cycle.completed" | "cycle.failed" | "cycle.stopped", turn, sentAt, cycle }` (a continued turn ends, and calls it, again). Failed deliveries are retried 5 times with backoff. If you set a signing secret in Settings, each call has `X-AgentCave-Signature: sha256=<hmac of the body>`.
 
 **TypeScript client** ([client/](client/README.md)), with zero dependencies. Install it in another project straight from the GitHub Releases (no npm account needed):
 
 ```bash
 # a fixed version (recommended: it never changes under you)
-npm install https://github.com/dvddarias/agentcave/releases/download/v0.2.1/agentcave-client-0.2.1.tgz
+npm install https://github.com/dvddarias/agentcave/releases/download/v0.2.2/agentcave-client-0.2.2.tgz
 # or the build of the latest push to main
 npm install https://github.com/dvddarias/agentcave/releases/download/client-latest/agentcave-client.tgz
 ```
@@ -145,7 +148,7 @@ example.com {
 ```yaml
 services:
   agentcave:
-    image: ghcr.io/dvddarias/agentcave:0.2.1
+    image: ghcr.io/dvddarias/agentcave:0.2.2
     environment:
       BASE_PATH: /cave
 ```

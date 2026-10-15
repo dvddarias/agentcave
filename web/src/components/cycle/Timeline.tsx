@@ -2,6 +2,7 @@ import type { CycleStatus, FileChanges } from "@agentcave/client";
 import { useState } from "react";
 import { Link } from "react-router";
 import { formatCost, formatDuration, formatTokens } from "../../lib/format";
+import { LIMIT_ERRORS } from "../../lib/limits";
 import type { TimelineItem, ToolResult } from "../../lib/timeline";
 import {
   IconAlert,
@@ -13,6 +14,7 @@ import {
   IconFile,
   IconHistory,
   IconMessage,
+  IconPlay,
   IconScissors,
   IconTerminal,
 } from "../icons";
@@ -246,7 +248,9 @@ function ToolCard({ item }: { item: Extract<TimelineItem, { kind: "tool" }> }) {
           {s.title.split("\n")[0]}
           {s.title.includes("\n") ? <span className="text-cave-500"> …</span> : null}
         </span>
-        {!r ? (
+        {!r && item.interrupted ? (
+          <Pill className="border-torch-700/50 text-torch-300">interrupted</Pill>
+        ) : !r ? (
           <Spinner size={13} className="shrink-0 text-sky-400" />
         ) : (
           <>
@@ -300,7 +304,13 @@ function ToolCard({ item }: { item: Extract<TimelineItem, { kind: "tool" }> }) {
           ) : null}
           {!r ? (
             <div className="flex items-center gap-2 text-xs text-cave-400">
-              <Spinner size={12} /> running…
+              {item.interrupted ? (
+                "The run ended before this returned."
+              ) : (
+                <>
+                  <Spinner size={12} /> running…
+                </>
+              )}
             </div>
           ) : null}
         </div>
@@ -367,6 +377,38 @@ function SubagentCard({ item }: { item: Extract<TimelineItem, { kind: "tool" }> 
   );
 }
 
+function ContinueCard({ item }: { item: Extract<TimelineItem, { kind: "continue" }> }) {
+  const [open, setOpen] = useState(false);
+  const info = LIMIT_ERRORS[item.after.code];
+  const max = info?.key ? item.limits[info.key] : null;
+  return (
+    <div className="fade-in py-2">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="flex w-full items-center gap-3 text-xs text-torch-300/90 hover:text-torch-200"
+      >
+        <div className="h-px flex-1 bg-torch-700/40" />
+        <IconPlay size={12} />
+        <span>
+          Continued after the {info?.label ?? item.after.code.replace(/_/g, " ")}
+          {info && max != null ? ` · now ${info.format(max)}` : ""}
+        </span>
+        <IconChevron size={12} className={cx("transition-transform", open && "rotate-90")} />
+        <div className="h-px flex-1 bg-torch-700/40" />
+      </button>
+      {open ? (
+        <div className="mt-2 rounded-xl border border-torch-700/40 bg-torch-500/5 px-4 py-3">
+          <div className="mb-1.5 text-[11px] font-medium tracking-wide text-torch-300/80 uppercase">
+            Sent to the agent
+          </div>
+          <Markdown text={item.message} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function FileChips({ files, onOpen }: { files: FileChanges; onOpen?: (path: string) => void }) {
   const all = [
     ...files.added.map((p) => ({ p, s: "added" as const })),
@@ -426,6 +468,8 @@ export function Timeline({
                 <div className="h-px flex-1 bg-torch-700/40" />
               </div>
             );
+          case "continue":
+            return <ContinueCard key={item.key} item={item} />;
           case "reasoning":
             return (
               <ThinkingBlock key={item.key} item={item} streaming={running && item.key === streamingKey} />

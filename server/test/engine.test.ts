@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { NUDGE_MESSAGE } from "../src/engine/runner.js";
 import { createTestCave, p, promptText, step, submit, type TestCave, until } from "./helpers.js";
@@ -318,6 +319,8 @@ describe("sub-agents", () => {
     // Usage rolls up: parent own = 3 steps * 0.001, child = 0.02.
     expect(done.totalUsage.costUsd).toBeCloseTo(0.023);
     expect(done.usage.costUsd).toBeCloseTo(0.003);
+    // The turn's limits count the sub-agent too.
+    expect(done.limitUsage.costUsd).toBeCloseTo(0.023);
     // Copied-back file.
     const bash = t.events(cycle.id).filter((e) => e.type === "tool.result" && e.data.tool === "bash");
     expect(JSON.stringify(bash[0].data)).toContain("3");
@@ -358,6 +361,175 @@ describe("sub-agents", () => {
     expect(JSON.stringify(t.events(cycle.id).find((e) => e.type === "tool.result")?.data)).toContain(
       "depth limit",
     );
+  });
+});
+
+describe("continue after a limit", () => {
+  it("continues a turn stopped by the token limit, with its memory, step numbers and usage", async () => {
+    t = await createTestCave();
+    await t.createAgent({ slug: "big-task", model: "m/big", limits: { maxTokens: 1000 } });
+    t.setScript("m/big", (n) =>
+      n < 2
+        ? step(
+            p.call("bash", { command: `echo part-${n}` }),
+            p.finish("tool-calls", { input: 600, output: 10 }),
+          )
+        : submit("All parts done."),
+    );
+    const cycle = await t.startCycle({ agent: "big-task", prompt: "Do the big task" });
+    const stopped = await t.waitFor(cycle.id);
+    expect(stopped.error?.code).toBe("limit_tokens");
+    expect(stopped.limitUsage.tokens).toBe(1220);
+
+    const r = await t.req("POST", `/cycles/${cycle.id}/continue`, {});
+    expect(r.status).toBe(202);
+    expect(["queued", "running"]).toContain(r.body.status);
+    expect(r.body.error).toBeNull();
+    // No room left under 1000 tokens: +50% of the limit on top of what was used.
+    expect(r.body.limits.maxTokens).toBe(1720);
+    await until(() => t.cave.ctx.cycles.get(cycle.id).status === "completed");
+
+    const done = t.cave.ctx.cycles.get(cycle.id);
+    expect(done.answer).toEqual({ format: "markdown", text: "All parts done." });
+    expect(done.turns).toBe(1);
+    expect(done.usage.steps).toBe(3);
+    expect(done.limitUsage.tokens).toBe(1340);
+    // The model saw the whole turn so far, then the continue message.
+    const prompt = promptText(t.calls["m/big"][2]);
+    expect(prompt).toContain("Do the big task");
+    expect(prompt).toContain("part-0");
+    expect(prompt).toContain("part-1");
+    expect(prompt).toContain("You were stopped before you finished");
+    const events = t.events(cycle.id);
+    const cont = events.find((e) => e.type === "turn.continue");
+    expect(cont?.type === "turn.continue" && cont.data.after.code).toBe("limit_tokens");
+    expect(cont?.type === "turn.continue" && cont.data.used.tokens).toBe(1220);
+    expect(events.filter((e) => e.type === "turn.start")).toHaveLength(1);
+    const steps = events.flatMap((e) => (e.type === "step.start" ? [e.data.step] : []));
+    expect(steps).toEqual([1, 2, 3]);
+    // The webhook-facing turn list shows one turn that completed.
+    const turns = await t.req("GET", `/cycles/${cycle.id}/turns`);
+    expect(turns.body.turns.map((x: { status: string }) => x.status)).toEqual(["completed"]);
+  });
+
+  it("keeps the finished steps when the time limit cuts a run short, and continues from them", async () => {
+    t = await createTestCave();
+    await t.createAgent({ slug: "slowpoke", model: "m/slowpoke", limits: { maxTimeSec: 1 } });
+    t.setScript("m/slowpoke", (n) => {
+      if (n === 0) return step(p.call("bash", { command: "echo draft > report.md && echo saved-draft" }));
+      if (n === 1) return step(p.call("bash", { command: "sleep 30" }));
+      return submit("Report finished.");
+    });
+    const cycle = await t.startCycle({ agent: "slowpoke", prompt: "Write the report" });
+    const stopped = await t.waitFor(cycle.id);
+    expect(stopped.error?.code).toBe("limit_time");
+    expect(stopped.limitUsage.timeSec).toBe(1);
+    expect(t.cave.ctx.cycles.latestTurn(cycle.id).messages).toContain("saved-draft");
+
+    const r = await t.req("POST", `/cycles/${cycle.id}/continue`, {
+      limits: { maxTimeSec: 30 },
+      message: "Skip the slow part.",
+    });
+    expect(r.status).toBe(202);
+    await until(() => t.cave.ctx.cycles.get(cycle.id).status === "completed");
+    const done = t.cave.ctx.cycles.get(cycle.id);
+    expect(done.limits.maxTimeSec).toBe(30);
+    expect(done.answer).toEqual({ format: "markdown", text: "Report finished." });
+    // Files from both runs count as the turn's changes.
+    expect(done.files).toEqual({ added: ["report.md"], modified: [], deleted: [] });
+    const prompt = promptText(t.calls["m/slowpoke"][2]);
+    expect(prompt).toContain("saved-draft");
+    expect(prompt).toContain("Skip the slow part.");
+  });
+
+  it("gives a turn stopped by the step cap another round of steps", async () => {
+    t = await createTestCave();
+    await t.req("PUT", "/settings", { hardStepCap: 2 });
+    await t.createAgent({ slug: "looper", model: "m/looper" });
+    t.setScript("m/looper", (n) =>
+      n < 3 ? step(p.call("bash", { command: `echo ${n}` })) : submit("Got there."),
+    );
+    const cycle = await t.startCycle({ agent: "looper", prompt: "x" });
+    const stopped = await t.waitFor(cycle.id);
+    expect(stopped.error?.code).toBe("limit_steps");
+    const r = await t.req("POST", `/cycles/${cycle.id}/continue`);
+    expect(r.status).toBe(202);
+    // No limit was exhausted, so none changed.
+    expect(r.body.limits).toEqual(stopped.limits);
+    await until(() => t.cave.ctx.cycles.get(cycle.id).status === "completed");
+    expect(promptText(t.calls["m/looper"][2])).toContain("up to 2 more steps");
+  });
+
+  it("refuses cycles that did not stop on a limit, and limits that leave no room", async () => {
+    t = await createTestCave();
+    await t.createAgent({ slug: "spend", model: "m/spend", limits: { maxCostUsd: 1 } });
+    await t.createAgent({ slug: "quick", model: "m/quick" });
+    t.setScript("m/spend", () =>
+      step(p.call("bash", { command: "echo hi" }), p.finish("tool-calls", { cost: 0.6 })),
+    );
+    t.setScript("m/quick", () => submit("ok"));
+
+    const quick = await t.startCycle({ agent: "quick", prompt: "x" });
+    await t.waitFor(quick.id);
+    const notLimited = await t.req("POST", `/cycles/${quick.id}/continue`, {});
+    expect(notLimited.status).toBe(409);
+    expect(notLimited.body.error.code).toBe("not_continuable");
+
+    const spender = await t.startCycle({ agent: "spend", prompt: "x" });
+    const stopped = await t.waitFor(spender.id);
+    expect(stopped.error?.code).toBe("limit_money");
+    const tooLow = await t.req("POST", `/cycles/${spender.id}/continue`, { limits: { maxCostUsd: 1.1 } });
+    expect(tooLow.status).toBe(400);
+    expect(tooLow.body.error.code).toBe("no_room");
+    expect(t.cave.ctx.cycles.get(spender.id).status).toBe("failed");
+    const bad = await t.req("POST", `/cycles/${spender.id}/continue`, { extendPercent: -5 });
+    expect(bad.status).toBe(400);
+  });
+});
+
+describe("upgrading", () => {
+  it("continues a turn the time limit stopped before turns could be continued", async () => {
+    const first = await createTestCave();
+    const dataDir = first.dataDir;
+    await first.createAgent({ slug: "legacy", model: "m/legacy", limits: { maxTimeSec: 1 } });
+    first.setScript("m/legacy", (n) =>
+      n === 0
+        ? step(p.call("bash", { command: "echo half > notes.md" }))
+        : step(p.reasoning("Thinking about the rest…"), p.call("bash", { command: "sleep 30" })),
+    );
+    const cycle = await first.startCycle({ agent: "legacy", prompt: "Write the notes" });
+    expect((await first.waitFor(cycle.id)).error?.code).toBe("limit_time");
+    await first.cave.close();
+
+    // Put the database back the way the previous version left such a turn: only the prompt was
+    // saved, and the columns of migration 2 did not exist.
+    const db = new DatabaseSync(path.join(dataDir, "agentcave.db"));
+    const turn = db.prepare("SELECT messages FROM turns WHERE cycle_id = ?").get(cycle.id) as {
+      messages: string;
+    };
+    const promptOnly = JSON.stringify(JSON.parse(turn.messages).slice(0, 1));
+    db.prepare("UPDATE turns SET messages = ? WHERE cycle_id = ?").run(promptOnly, cycle.id);
+    for (const col of ["elapsed_ms", "run_started_at", "spent_usd", "spent_tokens", "last_step", "resume"])
+      db.exec(`ALTER TABLE turns DROP COLUMN ${col}`);
+    db.exec("PRAGMA user_version = 1");
+    db.close();
+
+    t = await createTestCave({ dataDir });
+    const migrated = t.cave.ctx.cycles.get(cycle.id);
+    expect(migrated.limitUsage.timeSec).toBeGreaterThanOrEqual(1);
+    t.setScript("m/legacy", () => submit("Notes done."));
+    const r = await t.req("POST", `/cycles/${cycle.id}/continue`, {});
+    expect(r.status).toBe(202);
+    await until(() => t.cave.ctx.cycles.get(cycle.id).status === "completed");
+    // Its memory of the run was lost, so the agent is pointed at the files instead.
+    expect(promptText(t.calls["m/legacy"][0])).toContain("look at `/workspace`");
+    expect(t.cave.ctx.cycles.get(cycle.id).files?.added).toEqual(["notes.md"]);
+    // The step cut off mid-way keeps its number: the continued run starts after it.
+    const steps = t.events(cycle.id).flatMap((e) => (e.type === "step.start" ? [e.data.step] : []));
+    expect(steps).toEqual([1, 2, 3]);
+    await t.close();
+    t = undefined as unknown as TestCave;
+    fs.rmSync(dataDir, { recursive: true, force: true });
   });
 });
 

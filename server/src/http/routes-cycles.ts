@@ -1,4 +1,5 @@
 import type {
+  ContinueRequest,
   CycleEvent,
   CycleStatus,
   FollowUpRequest,
@@ -9,7 +10,7 @@ import { Hono } from "hono";
 import { stream as honoStream, streamSSE } from "hono/streaming";
 import { FINAL } from "../cycle-store.js";
 import { badRequest, conflict } from "../errors.js";
-import { followUpSchema, rerunSchema, startCycleSchema } from "../schemas.js";
+import { continueSchema, followUpSchema, rerunSchema, startCycleSchema } from "../schemas.js";
 import { contentDisposition, type HttpDeps, intParam, pathAfter, readJson } from "./util.js";
 
 const STATUSES: CycleStatus[] = ["queued", "running", "completed", "failed", "stopped"];
@@ -74,6 +75,11 @@ export function cycleRoutes(deps: HttpDeps): Hono {
   app.post("/:id/messages", async (c) => {
     const req = (await readJson(c, followUpSchema)) as FollowUpRequest;
     return c.json(await service.followUp(c.req.param("id"), req), 202);
+  });
+
+  app.post("/:id/continue", async (c) => {
+    const req = (await readJson(c, continueSchema)) as ContinueRequest;
+    return c.json(service.continue(c.req.param("id"), req), 202);
   });
 
   app.post("/:id/rerun", async (c) => {

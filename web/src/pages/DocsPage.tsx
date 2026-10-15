@@ -149,11 +149,26 @@ curl -O ${base}/cycles/cyc_01JA…/files/report.md         # one file
 curl -o out.zip '${base}/cycles/cyc_01JA…/files.zip?changed=true'`}
         />
       </Step>
-      <Step n={5} title="Follow up, stop, re-run">
+      <Step n={5} title="Follow up, continue after a limit, stop, re-run">
+        <p className="text-sm text-cave-400">
+          A follow-up is a new turn with fresh limits. If a limit stopped a turn that was nearly done (
+          <code className="font-mono">error.code</code> <code className="font-mono">limit_time</code>,{" "}
+          <code className="font-mono">limit_money</code>, <code className="font-mono">limit_tokens</code> or{" "}
+          <code className="font-mono">limit_steps</code>), <code className="font-mono">continue</code> runs
+          the same turn on from its last finished step, with the same memory and files. What it already used
+          still counts: <code className="font-mono">cycle.limitUsage</code> shows how much. With no body, each
+          exhausted limit gets +50% of itself as new room.
+        </p>
         <CodeBlock
           lang="bash"
           code={`# Continue the same conversation and sandbox (only when the cycle has finished)
 curl -X POST ${base}/cycles/cyc_01JA…/messages -H 'content-type: application/json' -d '{"prompt":"Now fix them."}'
+
+# A limit stopped it: give it 50% more room and let it carry on where it stopped
+curl -X POST ${base}/cycles/cyc_01JA…/continue
+# …or set the new limits yourself (totals for the turn), with a note for the agent
+curl -X POST ${base}/cycles/cyc_01JA…/continue -H 'content-type: application/json' \\
+  -d '{"limits":{"maxTimeSec":1500},"message":"You were close. Write the report now."}'
 
 # Stop it (sub-agents stop too)
 curl -X POST ${base}/cycles/cyc_01JA…/stop

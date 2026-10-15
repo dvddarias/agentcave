@@ -1,7 +1,13 @@
-import { FINAL_STATUSES, REASONING_EFFORTS, type ReasoningEffort } from "@agentcave/client";
+import {
+  CONTINUABLE_ERRORS,
+  FINAL_STATUSES,
+  REASONING_EFFORTS,
+  type ReasoningEffort,
+} from "@agentcave/client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
+import { ContinuePanel } from "../components/cycle/ContinuePanel";
 import { DetailsPanel, FilesPanel, RawPanel } from "../components/cycle/Panels";
 import { SystemPromptCard, Timeline } from "../components/cycle/Timeline";
 import { FileDrop } from "../components/FileDrop";
@@ -102,25 +108,18 @@ function CycleView({ id }: { id: string }) {
     );
   }
 
-  const lastTurn = [...timeline.items].reverse().find((i) => i.kind === "turn");
-  const start = lastTurn
-    ? new Date(lastTurn.ts).getTime()
-    : cycle.startedAt
-      ? new Date(cycle.startedAt).getTime()
-      : null;
-  const end = cycle.finishedAt
-    ? new Date(cycle.finishedAt).getTime()
-    : cycle.status === "running"
-      ? now
-      : null;
-  const turnUsage = timeline.turnUsage;
-  const turnCost = running ? (turnUsage?.costUsd ?? 0) : cycle.usage.costUsd;
-  const turnTokens = running
-    ? turnUsage
-      ? turnUsage.inputTokens + turnUsage.outputTokens
-      : 0
-    : cycle.usage.inputTokens + cycle.usage.outputTokens;
+  // What the latest turn used against its limits (sub-agents included). Time ticks live while
+  // running: the run's start plus what earlier runs of a continued turn used.
+  const used = cycle.limitUsage;
+  const timeUsed =
+    cycle.status === "running" && timeline.run
+      ? timeline.run.usedSec + Math.max(0, now - new Date(timeline.run.ts).getTime()) / 1000
+      : used.timeSec;
   const isFinal = FINAL_STATUSES.includes(cycle.status);
+  const continuable =
+    cycle.status === "failed" &&
+    !cycle.parentId &&
+    (CONTINUABLE_ERRORS as readonly string[]).includes(cycle.error?.code ?? "");
 
   return (
     <div className="flex h-full flex-col">
@@ -201,21 +200,21 @@ function CycleView({ id }: { id: string }) {
           <LimitBar
             label="Time (this turn)"
             icon={<IconClock size={12} />}
-            value={start && end ? (end - start) / 1000 : 0}
+            value={timeUsed}
             max={cycle.limits.maxTimeSec}
             format={(s) => formatDuration(s * 1000)}
           />
           <LimitBar
             label="Tokens (this turn)"
             icon={<span className="font-mono text-[10px]">tok</span>}
-            value={turnTokens}
+            value={used.tokens}
             max={cycle.limits.maxTokens}
             format={formatTokens}
           />
           <LimitBar
             label="Cost (this turn)"
             icon={<IconCoin size={12} />}
-            value={turnCost}
+            value={used.costUsd}
             max={cycle.limits.maxCostUsd}
             format={(v) => formatCost(v)}
           />
@@ -265,6 +264,7 @@ function CycleView({ id }: { id: string }) {
                 <Spinner size={12} /> Waiting for a free slot…
               </div>
             ) : null}
+            {continuable ? <ContinuePanel cycle={cycle} /> : null}
             {!cycle.parentId ? <FollowUp cycleId={cycle.id} enabled={isFinal} /> : null}
             <div className="h-8" />
           </div>

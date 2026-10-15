@@ -141,6 +141,22 @@ const MIGRATIONS: string[] = [
   CREATE INDEX webhook_due ON webhook_deliveries (status, next_retry_at);
   CREATE INDEX webhook_cycle ON webhook_deliveries (cycle_id);
   `,
+  // 2 — continuing a turn after a limit: what the turn used against its limits, across runs
+  `
+  ALTER TABLE turns ADD COLUMN elapsed_ms INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE turns ADD COLUMN run_started_at TEXT;
+  ALTER TABLE turns ADD COLUMN spent_usd REAL NOT NULL DEFAULT 0;
+  ALTER TABLE turns ADD COLUMN spent_tokens INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE turns ADD COLUMN last_step INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE turns ADD COLUMN resume TEXT;
+  UPDATE turns SET spent_usd = cost_usd, spent_tokens = input_tokens + output_tokens, last_step = steps,
+    elapsed_ms = CAST(MAX(0, (julianday(finished_at) - julianday(started_at)) * 86400000) AS INTEGER)
+    WHERE started_at IS NOT NULL AND finished_at IS NOT NULL;
+  -- A failed turn may have been cut off mid-step: number the steps of a continued run after that one.
+  UPDATE turns SET last_step = COALESCE((SELECT MAX(json_extract(e.data, '$.step')) FROM events e
+      WHERE e.cycle_id = turns.cycle_id AND e.turn = turns.idx AND e.type = 'step.start'), steps)
+    WHERE status = 'failed';
+  `,
 ];
 
 export function openDb(file: string): DB {

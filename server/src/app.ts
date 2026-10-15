@@ -18,7 +18,7 @@ import { SettingsService } from "./settings.js";
 import { WebhookService } from "./webhooks.js";
 
 /** Set by the Docker build (git tag, or `main-<sha>`); falls back to the package version in development. */
-export const VERSION = process.env.AGENTCAVE_VERSION || "0.2.1-dev";
+export const VERSION = process.env.AGENTCAVE_VERSION || "0.2.2-dev";
 
 export interface AgentCaveOptions {
   dataDir: string;

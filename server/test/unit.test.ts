@@ -2,9 +2,14 @@ import type { ModelMessage } from "ai";
 import { describe, expect, it, vi } from "vitest";
 import { diffManifests } from "../src/blobs.js";
 import { prepareAnswerSchema } from "../src/engine/answer-schema.js";
-import { Budget } from "../src/engine/budget.js";
+import { Budget, limitsForContinue, roomLeft } from "../src/engine/budget.js";
 import { findCut, ParagraphChunker } from "../src/engine/chunker.js";
-import { buildSystemPrompt, buildUserMessage, subagentToolName } from "../src/engine/prompt.js";
+import {
+  buildContinueMessage,
+  buildSystemPrompt,
+  buildUserMessage,
+  subagentToolName,
+} from "../src/engine/prompt.js";
 import { maybeTrim } from "../src/engine/trim.js";
 import { needsExplicitCaching, openRouterChatSettings } from "../src/openrouter.js";
 import { normalizeRelPath } from "../src/paths.js";
@@ -124,6 +129,62 @@ describe("limits and budget", () => {
     const b = new Budget({ maxTokens: 100 });
     b.add(0, 101);
     expect(b.exceeded()?.code).toBe("limit_tokens");
+  });
+  it("a continued turn starts from what it already spent", () => {
+    const b = new Budget({ maxCostUsd: 1 }, null, { costUsd: 0.9, tokens: 50 });
+    b.add(0.2, 10);
+    expect(b.exceeded()?.code).toBe("limit_money");
+    expect(b.tokens).toBe(60);
+  });
+});
+
+describe("limits for continuing a turn", () => {
+  const limits = { maxTimeSec: 600, maxCostUsd: 1, maxTokens: 100_000 };
+
+  it("gives the exhausted limit 50% of itself as new room by default", () => {
+    // Time ran out; money and tokens still had room and stay as they were.
+    expect(limitsForContinue(limits, { timeSec: 600, costUsd: 0.4, tokens: 5000 }, {})).toEqual({
+      maxTimeSec: 900,
+      maxCostUsd: 1,
+      maxTokens: 100_000,
+    });
+  });
+  it("adds the room on top of an overshoot", () => {
+    // Money is checked after each step, so a turn can go over: the new room is still +25% of $1.
+    const out = limitsForContinue(limits, { timeSec: 30, costUsd: 1.2, tokens: 5000 }, { extendPercent: 25 });
+    expect(out.maxCostUsd).toBeCloseTo(1.45);
+  });
+  it("uses explicit limits as given, and still raises other exhausted ones", () => {
+    const used = { timeSec: 600, costUsd: 1.05, tokens: 5000 };
+    expect(limitsForContinue(limits, used, { limits: { maxTimeSec: 1200, maxTokens: null } })).toEqual({
+      maxTimeSec: 1200,
+      maxCostUsd: 1.55,
+      maxTokens: null,
+    });
+  });
+  it("refuses limits that leave no room", () => {
+    const used = { timeSec: 600, costUsd: 0.4, tokens: 5000 };
+    expect(() => limitsForContinue(limits, used, { limits: { maxTimeSec: 600 } })).toThrow(/no room/);
+  });
+  it("describes the room left for the agent", () => {
+    const room = roomLeft(
+      { maxTimeSec: 900, maxCostUsd: 1.5, maxTokens: null },
+      {
+        timeSec: 600,
+        costUsd: 1,
+        tokens: 0,
+      },
+    );
+    expect(room).toEqual(["5m more time", "$0.50 more to spend"]);
+    const msg = buildContinueMessage({
+      reason: "Time limit reached (600s)",
+      room,
+      steps: null,
+      historyLost: false,
+      note: "Just write the report.",
+    });
+    expect(msg).toContain("you now have 5m more time and $0.50 more to spend");
+    expect(msg).toContain("Message from the user:\nJust write the report.");
   });
 });
 

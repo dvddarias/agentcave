@@ -3,6 +3,7 @@ import type {
   AgentInput,
   AgentVersion,
   ApiErrorBody,
+  ContinueRequest,
   Cycle,
   CycleEvent,
   CycleList,
@@ -208,6 +209,9 @@ export class AgentCave {
     followUp: (id: string, req: FollowUpRequest) =>
       this.request<Cycle>("POST", `/cycles/${id}/messages`, req),
     rerun: (id: string, req: RerunRequest = {}) => this.request<Cycle>("POST", `/cycles/${id}/rerun`, req),
+    /** Resume a turn that a limit stopped, from where it stopped, with more room (default +50%). */
+    continue: (id: string, req: ContinueRequest = {}) =>
+      this.request<Cycle>("POST", `/cycles/${id}/continue`, req),
     delete: (id: string) => this.request<void>("DELETE", `/cycles/${id}`),
     files: (id: string, opts: { changed?: boolean; turn?: number } = {}) => {
       const params = new URLSearchParams();

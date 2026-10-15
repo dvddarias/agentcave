@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   agentInputSchema,
+  continueSchema,
   followUpSchema,
   rerunSchema,
   settingsUpdateSchema,
@@ -143,6 +144,18 @@ export const ROUTES: RouteDoc[] = [
       "Starts a new turn with the same memory and sandbox files. Only when the cycle is finished (409 otherwise).",
     params: [id],
     body: followUpSchema,
+    returns: "Cycle",
+    status: 202,
+  },
+  {
+    method: "post",
+    path: "/cycles/{id}/continue",
+    tag: "Cycles",
+    summary: "Continue a turn that a limit stopped, with more room",
+    description:
+      "For a cycle that failed with limit_time, limit_money, limit_tokens or limit_steps: the same turn runs on from its last finished step, with the same memory and files, and its usage so far still counts. With an empty body, every limit with no room left gets +50% of itself. `limits` sets new totals for the turn (they stay for later turns); `extendPercent` changes the +50%; `message` adds instructions for the agent. The webhook fires again when the turn ends. 409 if the turn did not end on a limit, 400 `no_room` if the new limits leave no room.",
+    params: [id],
+    body: continueSchema,
     returns: "Cycle",
     status: 202,
   },

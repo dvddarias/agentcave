@@ -8,7 +8,7 @@ Straight from the GitHub Releases:
 
 ```bash
 # a fixed version (recommended)
-npm install https://github.com/dvddarias/agentcave/releases/download/v0.2.1/agentcave-client-0.2.1.tgz
+npm install https://github.com/dvddarias/agentcave/releases/download/v0.2.2/agentcave-client-0.2.2.tgz
 # or the build of the latest push to main (re-run this command to update)
 npm install https://github.com/dvddarias/agentcave/releases/download/client-latest/agentcave-client.tgz
 ```
@@ -35,8 +35,14 @@ for await (const e of cave.cycles.events(cycle.id)) {
 }
 
 // …or just wait (polls every 2 s)
-const done = await cave.cycles.wait(cycle.id, { timeoutMs: 20 * 60_000 });
+let done = await cave.cycles.wait(cycle.id, { timeoutMs: 20 * 60_000 });
 console.log(done.status, done.answer, done.files);
+
+// A limit stopped it before the answer? Give it more room and let it carry on (same turn, memory and files)
+if (done.error?.code.startsWith("limit_")) {
+  await cave.cycles.continue(cycle.id, { extendPercent: 50, message: "Wrap up and submit." });
+  done = await cave.cycles.wait(cycle.id);
+}
 
 // Follow up, stop, re-run, files
 await cave.cycles.followUp(cycle.id, { prompt: "Now fix them." });

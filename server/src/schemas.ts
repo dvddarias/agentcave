@@ -79,6 +79,12 @@ export const followUpSchema = z.strictObject({
   files: z.array(fileInputSchema).max(10_000).optional(),
 });
 
+export const continueSchema = z.strictObject({
+  limits: limitsSchema.optional(),
+  extendPercent: z.number().positive().max(10_000).optional(),
+  message: z.string().max(100_000).optional(),
+});
+
 export const rerunSchema = z.strictObject({
   agentVersion: z.number().int().positive().optional(),
   overrides: overridesSchema.optional(),

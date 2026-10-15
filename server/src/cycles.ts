@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 import type {
+  ContinueRequest,
   Cycle,
   FollowUpRequest,
   JsonSchema,
@@ -11,12 +12,15 @@ import type {
   StartCycleRequest,
   WorkspaceFile,
 } from "@agentcave/client";
+import type { ModelMessage } from "ai";
 import { Zip, ZipDeflate } from "fflate";
 import type { Manifest } from "./blobs.js";
 import type { Ctx } from "./context.js";
 import { newCycleParams, storeFiles } from "./cycle-factory.js";
-import { FINAL } from "./cycle-store.js";
+import { FINAL, limitUsage } from "./cycle-store.js";
 import { parseJson } from "./db.js";
+import { CONTINUABLE, limitsForContinue, roomLeft } from "./engine/budget.js";
+import { buildContinueMessage } from "./engine/prompt.js";
 import type { Runner } from "./engine/runner.js";
 import type { Scheduler } from "./engine/scheduler.js";
 import { ApiError, conflict, notFound } from "./errors.js";
@@ -87,6 +91,37 @@ export class CycleService {
     this.requireToken();
     const manifest = await storeFiles(this.ctx, req.files);
     this.ctx.cycles.addTurn(id, req.prompt, manifest);
+    this.scheduler.tick();
+    return this.ctx.cycles.get(id);
+  }
+
+  /** Resumes the latest turn after a limit stopped it: same turn, memory and files, more room. */
+  continue(id: string, req: ContinueRequest): Cycle {
+    const row = this.ctx.cycles.getRow(id);
+    if (row.parent_id) throw conflict("Sub-agent cycles are driven by their parent and cannot be continued");
+    if (!FINAL.includes(row.status)) {
+      throw conflict(`The cycle is ${row.status}; only a finished turn can be continued`, "cycle_busy");
+    }
+    if (!row.error_code || !CONTINUABLE.includes(row.error_code)) {
+      throw conflict(
+        `Only a turn stopped by a limit (${CONTINUABLE.join(", ")}) can be continued; this one ended ${row.error_code ? `with ${row.error_code}` : row.status}. Send a follow-up instead.`,
+        "not_continuable",
+      );
+    }
+    this.requireToken();
+    const turn = this.ctx.cycles.latestTurn(id);
+    const used = limitUsage(turn, false);
+    const limits = limitsForContinue(parseJson<Limits>(row.limits, {}), used, req);
+    const after = { code: row.error_code, message: row.error_message ?? row.error_code };
+    const saved = parseJson<ModelMessage[]>(turn.messages, []);
+    const message = buildContinueMessage({
+      reason: after.message,
+      room: roomLeft(limits, used),
+      steps: after.code === "limit_steps" ? this.ctx.settings.get().hardStepCap : null,
+      historyLost: turn.steps > 0 && !saved.some((m) => m.role === "assistant"),
+      note: req.message,
+    });
+    this.ctx.cycles.continueTurn(id, turn.id, limits, { after, message });
     this.scheduler.tick();
     return this.ctx.cycles.get(id);
   }

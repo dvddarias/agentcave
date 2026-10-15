@@ -1,4 +1,13 @@
-import type { Answer, CycleError, CycleEvent, CycleStatus, FileChanges, Usage } from "@agentcave/client";
+import type {
+  Answer,
+  CycleError,
+  CycleEvent,
+  CycleStatus,
+  FileChanges,
+  Limits,
+  LimitUsage,
+  Usage,
+} from "@agentcave/client";
 
 export interface ToolResult {
   output: unknown;
@@ -20,6 +29,15 @@ export type TimelineItem =
   | { kind: "turn"; key: string; turn: number; attempt: number; prompt: string; files: string[]; ts: string }
   | { kind: "restart"; key: string; attempt: number; reason: string; ts: string }
   | {
+      kind: "continue";
+      key: string;
+      after: CycleError;
+      limits: Limits;
+      used: LimitUsage;
+      message: string;
+      ts: string;
+    }
+  | {
       kind: "reasoning";
       key: string;
       step: number;
@@ -37,6 +55,8 @@ export type TimelineItem =
       tool: string;
       input: unknown;
       result?: ToolResult;
+      /** The run ended (limit, stop, restart) before the tool returned. */
+      interrupted?: boolean;
       subagent?: SubagentRef;
       ts: string;
     }
@@ -55,10 +75,10 @@ export type TimelineItem =
 
 export interface Timeline {
   items: TimelineItem[];
-  /** Usage of the turn in progress (from the latest `usage` event). */
-  turnUsage: Usage | null;
   /** Step number currently running. */
   step: number;
+  /** When the latest run started, and the time its turn had used before (a continued turn). */
+  run: { ts: string; usedSec: number } | null;
   /** Key of the block still streaming (last text/reasoning when nothing came after it). */
   streamingKey: string | null;
 }
@@ -66,22 +86,30 @@ export interface Timeline {
 export function buildTimeline(events: CycleEvent[]): Timeline {
   const items: TimelineItem[] = [];
   const index = new Map<string, number>();
-  let turnUsage: Usage | null = null;
   let step = 0;
-  let currentTurn = -1;
+  let run: Timeline["run"] = null;
+  // Tool calls still waiting for their result.
+  const pending = new Set<string>();
 
   const put = (item: TimelineItem) => {
     index.set(item.key, items.length);
     items.push(item);
+  };
+  const interruptPending = () => {
+    for (const key of pending) {
+      const at = index.get(key);
+      if (at !== undefined)
+        items[at] = { ...(items[at] as Extract<TimelineItem, { kind: "tool" }>), interrupted: true };
+    }
+    pending.clear();
   };
 
   for (const e of events) {
     const scope = `${e.turn}:${e.attempt}`;
     switch (e.type) {
       case "turn.start":
-        if (currentTurn !== e.turn) turnUsage = null;
-        currentTurn = e.turn;
         step = 0;
+        run = { ts: e.ts, usedSec: 0 };
         put({
           kind: "turn",
           key: `turn:${scope}`,
@@ -92,7 +120,20 @@ export function buildTimeline(events: CycleEvent[]): Timeline {
           ts: e.ts,
         });
         break;
+      case "turn.continue":
+        run = { ts: e.ts, usedSec: e.data.used.timeSec };
+        put({
+          kind: "continue",
+          key: `continue:${scope}:${e.seq}`,
+          after: e.data.after,
+          limits: e.data.limits,
+          used: e.data.used,
+          message: e.data.message,
+          ts: e.ts,
+        });
+        break;
       case "restart":
+        interruptPending();
         put({
           kind: "restart",
           key: `restart:${scope}:${e.seq}`,
@@ -135,6 +176,7 @@ export function buildTimeline(events: CycleEvent[]): Timeline {
         break;
       }
       case "tool.call":
+        pending.add(`tool:${scope}:${e.data.callId}`);
         put({
           kind: "tool",
           key: `tool:${scope}:${e.data.callId}`,
@@ -146,6 +188,7 @@ export function buildTimeline(events: CycleEvent[]): Timeline {
         });
         break;
       case "tool.result": {
+        pending.delete(`tool:${scope}:${e.data.callId}`);
         const at = index.get(`tool:${scope}:${e.data.callId}`);
         const result: ToolResult = {
           output: e.data.output,
@@ -202,9 +245,6 @@ export function buildTimeline(events: CycleEvent[]): Timeline {
           ts: e.ts,
         });
         break;
-      case "usage":
-        turnUsage = e.data.turnUsage;
-        break;
       case "answer":
         put({ kind: "answer", key: `answer:${scope}`, answer: e.data.answer, files: e.data.files, ts: e.ts });
         break;
@@ -212,9 +252,11 @@ export function buildTimeline(events: CycleEvent[]): Timeline {
         put({ kind: "error", key: `error:${scope}:${e.seq}`, error: e.data, ts: e.ts });
         break;
       case "turn.end":
+        interruptPending();
+        // A continued turn ends more than once.
         put({
           kind: "turnEnd",
-          key: `end:${scope}`,
+          key: `end:${scope}:${e.seq}`,
           status: e.data.status,
           usage: e.data.usage,
           files: e.data.files,
@@ -228,5 +270,5 @@ export function buildTimeline(events: CycleEvent[]): Timeline {
 
   const last = items[items.length - 1];
   const streamingKey = last && (last.kind === "text" || last.kind === "reasoning") ? last.key : null;
-  return { items, turnUsage, step, streamingKey };
+  return { items, step, run, streamingKey };
 }

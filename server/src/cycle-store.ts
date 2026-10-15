@@ -7,6 +7,7 @@ import type {
   FileChanges,
   JsonSchema,
   Limits,
+  LimitUsage,
   ReasoningEffort,
   StepUsage,
   Turn,
@@ -85,6 +86,25 @@ export interface TurnRow {
   steps: number;
   started_at: string | null;
   finished_at: string | null;
+  /** Running time of the turn's finished runs (a continued turn runs more than once). */
+  elapsed_ms: number;
+  /** When the current (or last) run started. */
+  run_started_at: string | null;
+  /** Cost and input+output tokens with sub-agents included: what the limits count. */
+  spent_usd: number;
+  spent_tokens: number;
+  /** Highest step number used so far; a continued run numbers its steps after it. */
+  last_step: number;
+  /** JSON `Resume` while a continue request waits to run. */
+  resume: string | null;
+}
+
+/** A continue request waiting for the runner. */
+export interface Resume {
+  /** The error that stopped the previous run. */
+  after: CycleError;
+  /** The user message that tells the agent to continue. */
+  message: string;
 }
 
 type JoinedRow = CycleRow & {
@@ -92,6 +112,10 @@ type JoinedRow = CycleRow & {
   t_answer: string | null;
   t_changes: string | null;
   t_steps: number | null;
+  t_elapsed_ms: number | null;
+  t_run_started_at: string | null;
+  t_spent_usd: number | null;
+  t_spent_tokens: number | null;
 };
 
 export interface CreateCycleParams {
@@ -131,6 +155,8 @@ export interface ListQuery {
 export const FINAL: CycleStatus[] = ["completed", "failed", "stopped"];
 
 const SELECT_JOINED = `SELECT c.*, t.answer AS t_answer, t.changes AS t_changes, t.steps AS t_steps,
+    t.elapsed_ms AS t_elapsed_ms, t.run_started_at AS t_run_started_at, t.spent_usd AS t_spent_usd,
+    t.spent_tokens AS t_spent_tokens,
     (SELECT substr(t0.prompt, 1, 300) FROM turns t0 WHERE t0.cycle_id = c.id AND t0.idx = 0) AS p0
   FROM cycles c LEFT JOIN turns t ON t.cycle_id = c.id AND t.idx = c.turn`;
 
@@ -152,6 +178,14 @@ export function rowUsage(r: {
     costEstimated: r.cost_estimated === 1,
     steps: r.steps,
   };
+}
+
+export function limitUsage(
+  t: { elapsed_ms: number; run_started_at: string | null; spent_usd: number; spent_tokens: number },
+  running: boolean,
+): LimitUsage {
+  const live = running && t.run_started_at ? Math.max(0, Date.now() - Date.parse(t.run_started_at)) : 0;
+  return { timeSec: (t.elapsed_ms + live) / 1000, costUsd: t.spent_usd, tokens: t.spent_tokens };
 }
 
 /** Data access for cycles and turns. */
@@ -415,7 +449,8 @@ export class CycleStore {
       );
       run(
         this.db,
-        "UPDATE turns SET status = 'running', started_at = COALESCE(started_at, ?) WHERE id = ?",
+        "UPDATE turns SET status = 'running', started_at = COALESCE(started_at, ?), run_started_at = ? WHERE id = ?",
+        now,
         now,
         turnId,
       );
@@ -443,7 +478,8 @@ export class CycleStore {
       this.db,
       `UPDATE turns SET status = 'queued', messages = '[]', nudges = 0, answer = NULL, changes = NULL, error_code = NULL,
         error_message = NULL, input_tokens = 0, output_tokens = 0, reasoning_tokens = 0, cached_tokens = 0,
-        cost_usd = 0, cost_estimated = 0, steps = 0 WHERE id = ?`,
+        cost_usd = 0, cost_estimated = 0, steps = 0, elapsed_ms = 0, spent_usd = 0, spent_tokens = 0, last_step = 0,
+        resume = NULL WHERE id = ?`,
       turnId,
     );
   }
@@ -492,13 +528,16 @@ export class CycleStore {
         this.db,
         `UPDATE turns SET input_tokens = input_tokens + ?, output_tokens = output_tokens + ?,
           reasoning_tokens = reasoning_tokens + ?, cached_tokens = cached_tokens + ?, cost_usd = cost_usd + ?,
-          cost_estimated = MAX(cost_estimated, ?), steps = steps + 1 WHERE id = ?`,
+          cost_estimated = MAX(cost_estimated, ?), steps = steps + 1, spent_usd = spent_usd + ?,
+          spent_tokens = spent_tokens + ? WHERE id = ?`,
         u.inputTokens,
         u.outputTokens,
         u.reasoningTokens,
         u.cachedTokens,
         u.costUsd,
         est,
+        u.costUsd,
+        u.inputTokens + u.outputTokens,
         turnId,
       );
       for (const a of ancestors) {
@@ -510,6 +549,16 @@ export class CycleStore {
           u.outputTokens,
           u.costUsd,
           now,
+          a,
+        );
+        // Sub-agent spending counts toward the limits of the ancestor's running turn.
+        run(
+          this.db,
+          `UPDATE turns SET spent_usd = spent_usd + ?, spent_tokens = spent_tokens + ?
+           WHERE cycle_id = ? AND idx = (SELECT turn FROM cycles WHERE id = ?)`,
+          u.costUsd,
+          u.inputTokens + u.outputTokens,
+          a,
           a,
         );
       }
@@ -526,12 +575,16 @@ export class CycleStore {
       changes: FileChanges | null;
       endSnapshot: Manifest | null;
       error: CycleError | null;
+      /** Running time of all the turn's runs so far (unchanged when left out). */
+      elapsedMs?: number;
+      lastStep?: number;
     },
   ): void {
     run(
       this.db,
       `UPDATE turns SET status = ?, answer = ?, changes = ?, end_snapshot = COALESCE(?, end_snapshot),
-        error_code = ?, error_message = ?, finished_at = ? WHERE id = ?`,
+        error_code = ?, error_message = ?, finished_at = ?, elapsed_ms = COALESCE(?, elapsed_ms),
+        last_step = COALESCE(?, last_step), resume = NULL WHERE id = ?`,
       r.status,
       r.answer ? JSON.stringify(r.answer) : null,
       r.changes ? JSON.stringify(r.changes) : null,
@@ -539,8 +592,38 @@ export class CycleStore {
       r.error?.code ?? null,
       r.error?.message ?? null,
       nowIso(),
+      r.elapsedMs ?? null,
+      r.lastStep ?? null,
       turnId,
     );
+  }
+
+  /** Puts a turn that a limit stopped back in the queue, to run on from where it stopped. */
+  continueTurn(cycleId: string, turnId: string, limits: Limits, resume: Resume): CycleRow {
+    const row = this.getRow(cycleId);
+    tx(this.db, () => {
+      run(
+        this.db,
+        `UPDATE turns SET status = 'queued', error_code = NULL, error_message = NULL, finished_at = NULL, resume = ?
+         WHERE id = ?`,
+        JSON.stringify(resume),
+        turnId,
+      );
+      run(
+        this.db,
+        `UPDATE cycles SET limits = ?, status = 'queued', error_code = NULL, error_message = NULL, activity = NULL,
+          finished_at = NULL, updated_at = ? WHERE id = ?`,
+        JSON.stringify(limits),
+        nowIso(),
+        cycleId,
+      );
+    });
+    this.events.append(cycleId, row.turn, row.attempts, {
+      type: "cycle.status",
+      data: { status: "queued", error: null },
+    });
+    this.events.touch(cycleId);
+    return this.getRow(cycleId);
   }
 
   finishCycle(cycleId: string, status: CycleStatus, error: CycleError | null): void {
@@ -573,7 +656,7 @@ export class CycleStore {
   // ------------------------------------------------------------------ DTOs
 
   toDTO(
-    r: CycleRow & Partial<Pick<JoinedRow, "p0" | "t_answer" | "t_changes" | "t_steps">>,
+    r: CycleRow & Partial<Omit<JoinedRow, keyof CycleRow>>,
     opts: { withSystemPrompt?: boolean } = {},
   ): Cycle {
     const dto: Cycle = {
@@ -601,6 +684,15 @@ export class CycleStore {
         outputTokens: r.output_tokens + r.sub_output_tokens,
         costUsd: r.cost_usd + r.sub_cost_usd,
       },
+      limitUsage: limitUsage(
+        {
+          elapsed_ms: r.t_elapsed_ms ?? 0,
+          run_started_at: r.t_run_started_at ?? null,
+          spent_usd: r.t_spent_usd ?? 0,
+          spent_tokens: r.t_spent_tokens ?? 0,
+        },
+        r.status === "running",
+      ),
       answer: parseJson<Answer | null>(r.t_answer, null),
       files: parseJson<FileChanges | null>(r.t_changes, null),
       error: r.error_code ? { code: r.error_code, message: r.error_message ?? "" } : null,
@@ -616,6 +708,7 @@ export class CycleStore {
       dto.answer = parseJson<Answer | null>(t?.answer, null);
       dto.files = parseJson<FileChanges | null>(t?.changes, null);
       dto.progress.steps = t?.steps ?? 0;
+      if (t) dto.limitUsage = limitUsage(t, r.status === "running");
       dto.promptPreview =
         one<{ p: string }>(
           this.db,
@@ -637,6 +730,7 @@ export class CycleStore {
       files: parseJson<FileChanges | null>(t.changes, null),
       error: t.error_code ? { code: t.error_code, message: t.error_message ?? "" } : null,
       usage: rowUsage(t),
+      limitUsage: limitUsage(t, t.status === "running"),
       nudges: t.nudges,
       startedAt: t.started_at,
       finishedAt: t.finished_at,
