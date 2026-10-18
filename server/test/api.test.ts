@@ -377,4 +377,43 @@ describe("system API", () => {
 
     expect((await t.req("GET", "/nope")).status).toBe(404);
   });
+
+  it("keeps spend in usage totals after cycles are deleted", async () => {
+    t = await createTestCave();
+    await t.createAgent({ slug: "spender", model: "m/spend" });
+    t.setScript("m/spend", () =>
+      step(p.call("submit_answer", { answer: "x" }), p.finish("tool-calls", { cost: 0.25 })),
+    );
+    const a = await t.startCycle({ agent: "spender", prompt: "x" });
+    const b = await t.startCycle({ agent: "spender", prompt: "y" });
+    await t.waitFor(a.id);
+    await t.waitFor(b.id);
+
+    const totals = async () => {
+      const stats = (await t.req("GET", "/stats")).body;
+      const agent = (await t.req("GET", "/agents/spender")).body;
+      return {
+        usage: stats.totals,
+        byAgent: stats.byAgent[0],
+        byModel: stats.byModel[0],
+        agent: agent.stats,
+      };
+    };
+    const before = await totals();
+    expect(before.usage).toMatchObject({ cycles: 2, inputTokens: 200, outputTokens: 40 });
+    expect(before.usage.costUsd).toBeCloseTo(0.5);
+    expect(before.agent).toMatchObject({ cycles: 2, running: 0 });
+    expect(before.agent.costUsd).toBeCloseTo(0.5);
+
+    // Deleted by hand, and by retention.
+    expect((await t.req("DELETE", `/cycles/${a.id}`)).status).toBe(204);
+    await t.req("PUT", "/settings", { retentionDays: 1 });
+    t.cave.ctx.db
+      .prepare("UPDATE cycles SET finished_at = '2000-01-01T00:00:00.000Z' WHERE id = ?")
+      .run(b.id);
+    expect((await t.req("POST", "/maintenance/cleanup")).body.deletedCycles).toBe(1);
+    expect((await t.req("GET", "/cycles")).body.cycles).toHaveLength(0);
+
+    expect(await totals()).toEqual(before);
+  });
 });

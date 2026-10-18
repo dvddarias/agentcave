@@ -157,6 +157,26 @@ const MIGRATIONS: string[] = [
       WHERE e.cycle_id = turns.cycle_id AND e.turn = turns.idx AND e.type = 'step.start'), steps)
     WHERE status = 'failed';
   `,
+  // 3 — what each cycle spent, kept after the cycle is deleted (retention or by hand), so usage totals
+  // don't lose money that was spent. No foreign key to cycles on purpose.
+  `
+  CREATE TABLE cycle_usage (
+    cycle_id TEXT PRIMARY KEY,
+    agent_id TEXT NOT NULL,
+    agent_slug TEXT NOT NULL,
+    agent_name TEXT NOT NULL,
+    model TEXT NOT NULL,
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    cost_usd REAL NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX cycle_usage_created ON cycle_usage (created_at);
+  CREATE INDEX cycle_usage_agent ON cycle_usage (agent_id, created_at);
+  INSERT INTO cycle_usage (cycle_id, agent_id, agent_slug, agent_name, model, input_tokens, output_tokens, cost_usd,
+      created_at)
+    SELECT id, agent_id, agent_slug, agent_name, model, input_tokens, output_tokens, cost_usd, created_at FROM cycles;
+  `,
 ];
 
 export function openDb(file: string): DB {

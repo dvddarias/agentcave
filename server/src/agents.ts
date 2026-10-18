@@ -398,25 +398,28 @@ export class AgentService {
     }
   }
 
+  /** Totals come from `cycle_usage`, so cycles deleted by retention (or by hand) still count. */
   private statsByAgent(agentId?: string): Map<string, AgentStats> {
-    const rows = all<{
-      agent_id: string;
-      cycles: number;
-      running: number;
-      cost: number;
-      last: string | null;
-    }>(
+    const where = agentId ? "WHERE agent_id = ?" : "";
+    const params = agentId ? [agentId] : [];
+    const rows = all<{ agent_id: string; cycles: number; cost: number; last: string | null }>(
       this.db,
-      `SELECT agent_id, COUNT(*) AS cycles,
-              SUM(CASE WHEN status IN ('running', 'queued') THEN 1 ELSE 0 END) AS running,
-              SUM(cost_usd) AS cost, MAX(created_at) AS last
-       FROM cycles ${agentId ? "WHERE agent_id = ?" : ""} GROUP BY agent_id`,
-      ...(agentId ? [agentId] : []),
+      `SELECT agent_id, COUNT(*) AS cycles, SUM(cost_usd) AS cost, MAX(created_at) AS last
+       FROM cycle_usage ${where} GROUP BY agent_id`,
+      ...params,
+    );
+    const running = new Map(
+      all<{ agent_id: string; n: number }>(
+        this.db,
+        `SELECT agent_id, COUNT(*) AS n FROM cycles
+         WHERE status IN ('running', 'queued') ${agentId ? "AND agent_id = ?" : ""} GROUP BY agent_id`,
+        ...params,
+      ).map((r) => [r.agent_id, r.n]),
     );
     return new Map(
       rows.map((r) => [
         r.agent_id,
-        { cycles: r.cycles, running: r.running ?? 0, costUsd: r.cost ?? 0, lastRunAt: r.last },
+        { cycles: r.cycles, running: running.get(r.agent_id) ?? 0, costUsd: r.cost ?? 0, lastRunAt: r.last },
       ]),
     );
   }

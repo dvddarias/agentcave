@@ -502,7 +502,7 @@ describe("upgrading", () => {
     await first.cave.close();
 
     // Put the database back the way the previous version left such a turn: only the prompt was
-    // saved, and the columns of migration 2 did not exist.
+    // saved, and the columns of migration 2 and the table of migration 3 did not exist.
     const db = new DatabaseSync(path.join(dataDir, "agentcave.db"));
     const turn = db.prepare("SELECT messages FROM turns WHERE cycle_id = ?").get(cycle.id) as {
       messages: string;
@@ -511,12 +511,16 @@ describe("upgrading", () => {
     db.prepare("UPDATE turns SET messages = ? WHERE cycle_id = ?").run(promptOnly, cycle.id);
     for (const col of ["elapsed_ms", "run_started_at", "spent_usd", "spent_tokens", "last_step", "resume"])
       db.exec(`ALTER TABLE turns DROP COLUMN ${col}`);
+    db.exec("DROP TABLE cycle_usage");
     db.exec("PRAGMA user_version = 1");
     db.close();
 
     t = await createTestCave({ dataDir });
     const migrated = t.cave.ctx.cycles.get(cycle.id);
     expect(migrated.limitUsage.timeSec).toBeGreaterThanOrEqual(1);
+    // Spend so far is copied into the usage totals.
+    expect((await t.req("GET", "/stats")).body.totals.costUsd).toBeCloseTo(migrated.usage.costUsd);
+    expect(migrated.usage.costUsd).toBeGreaterThan(0);
     t.setScript("m/legacy", () => submit("Notes done."));
     const r = await t.req("POST", `/cycles/${cycle.id}/continue`, {});
     expect(r.status).toBe(202);

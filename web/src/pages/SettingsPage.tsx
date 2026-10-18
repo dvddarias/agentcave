@@ -189,7 +189,11 @@ function RuntimeCard({
       <h2 className="mb-4 text-sm font-semibold text-cave-100">Runtime</h2>
       <div className="grid gap-4 sm:grid-cols-2">
         {field("maxParallel", "Cycles running at the same time", "Others wait in the queue.")}
-        {field("retentionDays", "Delete finished cycles after (days)", "0 = keep forever.")}
+        {field(
+          "retentionDays",
+          "Delete finished cycles after (days)",
+          "0 = keep forever. Usage totals keep their spend.",
+        )}
       </div>
       <h3 className="mt-6 mb-2 text-xs font-semibold tracking-wider text-cave-400 uppercase">
         Default limits per turn

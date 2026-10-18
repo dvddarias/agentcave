@@ -385,6 +385,17 @@ export class CycleStore {
         now,
         now,
       );
+      run(
+        this.db,
+        `INSERT INTO cycle_usage (cycle_id, agent_id, agent_slug, agent_name, model, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        id,
+        p.agentId,
+        p.agentSlug,
+        p.agentName,
+        p.model,
+        now,
+      );
       this.insertTurn(id, 0, p.prompt, p.inputManifest, p.status ?? "queued");
     });
     this.events.append(id, 0, 0, {
@@ -522,6 +533,15 @@ export class CycleStore {
         u.costUsd,
         est,
         now,
+        cycleId,
+      );
+      run(
+        this.db,
+        `UPDATE cycle_usage SET input_tokens = input_tokens + ?, output_tokens = output_tokens + ?,
+          cost_usd = cost_usd + ? WHERE cycle_id = ?`,
+        u.inputTokens,
+        u.outputTokens,
+        u.costUsd,
         cycleId,
       );
       run(

@@ -1,6 +1,6 @@
 {
   "name": "@agentcave/server",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "private": true,
   "type": "module",
   "main": "dist/index.js",
@@ -27,7 +27,7 @@
     "zod": "^4.6.6"
   },
   "devDependencies": {
-    "@agentcave/client": "0.2.2",
+    "@agentcave/client": "0.2.3",
     "@types/node": "^24.0.0",
     "esbuild": "^0.28.2",
     "tsx": "^4.23.15",
