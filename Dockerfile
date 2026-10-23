@@ -2,7 +2,7 @@
 
 # Node and Alpine are pinned together: the runtime stage copies the Node binary
 # from the node image onto the same Alpine release.
-ARG NODE_IMAGE=node:24-alpine3.24
+ARG NODE_IMAGE=node:24.22.1-alpine3.24
 ARG ALPINE_IMAGE=alpine:3.24
 
 # ---------------------------------------------------------------------------

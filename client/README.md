@@ -8,7 +8,7 @@ Straight from the GitHub Releases:
 
 ```bash
 # a fixed version (recommended)
-npm install https://github.com/dvddarias/agentcave/releases/download/v0.2.3/agentcave-client-0.2.3.tgz
+npm install https://github.com/dvddarias/agentcave/releases/download/v0.2.4/agentcave-client-0.2.4.tgz
 # or the build of the latest push to main (re-run this command to update)
 npm install https://github.com/dvddarias/agentcave/releases/download/client-latest/agentcave-client.tgz
 ```

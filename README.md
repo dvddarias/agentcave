@@ -96,7 +96,7 @@ Base URL `http://<host>:7420/api/v1` (with `BASE_PATH`: `…/<prefix>/api/v1`). 
 
 ```bash
 # a fixed version (recommended: it never changes under you)
-npm install https://github.com/dvddarias/agentcave/releases/download/v0.2.3/agentcave-client-0.2.3.tgz
+npm install https://github.com/dvddarias/agentcave/releases/download/v0.2.4/agentcave-client-0.2.4.tgz
 # or the build of the latest push to main
 npm install https://github.com/dvddarias/agentcave/releases/download/client-latest/agentcave-client.tgz
 ```
@@ -148,7 +148,7 @@ example.com {
 ```yaml
 services:
   agentcave:
-    image: ghcr.io/dvddarias/agentcave:0.2.3
+    image: ghcr.io/dvddarias/agentcave:0.2.4
     environment:
       BASE_PATH: /cave
 ```

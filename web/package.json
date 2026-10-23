@@ -1,10 +1,10 @@
 {
   "name": "@agentcave/web",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "private": true,
   "type": "module",
   "dependencies": {
-    "@agentcave/client": "0.2.3",
+    "@agentcave/client": "0.2.4",
     "@codemirror/lang-json": "^6.0.2",
     "@codemirror/lang-markdown": "^6.5.2",
     "@codemirror/language-data": "^6.5.2",

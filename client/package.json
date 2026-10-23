@@ -1,6 +1,6 @@
 {
   "name": "@agentcave/client",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Tiny typed client for the AgentCave HTTP API (zero dependencies).",
   "license": "MIT",
   "type": "module",
