@@ -9,12 +9,12 @@ import type { ModelRequest } from "../src/openrouter.js";
 
 export type Part = LanguageModelV4StreamPart;
 
-/** A scripted model: `(callIndex, options) => stream parts` per model id. */
+/** A scripted model: `(callIndex, options) => stream parts` (or a stream of them) per model id. */
 export type Script = (
   call: number,
   options: LanguageModelV4CallOptions,
   req: ModelRequest,
-) => Part[] | Promise<Part[]>;
+) => Part[] | ReadableStream<Part> | Promise<Part[] | ReadableStream<Part>>;
 
 let callSeq = 0;
 
@@ -67,6 +67,42 @@ export function step(...parts: Part[][]): Part[] {
 
 export const submit = (answer: string) => step(p.call("submit_answer", { answer }));
 
+/**
+ * A model call that sends `parts` and then stays open until the request is aborted, failing the way
+ * @openrouter/ai-sdk-provider 3.1.0 does then: the aborted response fails its parser streams, and
+ * cancelling the stream while that error is on its way rejects, in a promise its cancel() leaves
+ * unhandled. (With the real provider that is a race; here the cancel always loses it.)
+ */
+export function hangingStream(parts: Part[], signal: AbortSignal | undefined): ReadableStream<Part> {
+  const failed = () => new Error("Failed to process successful response", { cause: signal?.reason });
+  // The parsed HTTP response.
+  const response = new ReadableStream<Part>({
+    start(controller) {
+      for (const part of parts) controller.enqueue(part);
+      signal?.addEventListener("abort", () => setTimeout(() => controller.error(failed())), { once: true });
+    },
+    cancel: () => (signal?.aborted ? Promise.reject(failed()) : undefined),
+  });
+  // The provider's withStreamErrorHandling().
+  const reader = response.getReader();
+  return new ReadableStream<Part>({
+    async pull(controller) {
+      try {
+        const { done, value } = await reader.read();
+        if (done) controller.close();
+        else controller.enqueue(value);
+      } catch (error) {
+        controller.enqueue({ type: "error", error });
+        reader.cancel().catch(() => {});
+        controller.close();
+      }
+    },
+    cancel(reason) {
+      reader.cancel(reason);
+    },
+  });
+}
+
 /** Prompt sent to the model, as text (to assert on). */
 export function promptText(options: LanguageModelV4CallOptions): string {
   return JSON.stringify(options.prompt);
@@ -108,7 +144,7 @@ export async function createTestCave(
           counters[req.modelId] = n;
           calls[req.modelId] = [...(calls[req.modelId] ?? []), options];
           const parts = await script(n, options, req);
-          return { stream: convertArrayToReadableStream(parts) };
+          return { stream: Array.isArray(parts) ? convertArrayToReadableStream(parts) : parts };
         },
       }),
     { requiresToken: false },

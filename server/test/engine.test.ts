@@ -3,7 +3,16 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { NUDGE_MESSAGE } from "../src/engine/runner.js";
-import { createTestCave, p, promptText, step, submit, type TestCave, until } from "./helpers.js";
+import {
+  createTestCave,
+  hangingStream,
+  p,
+  promptText,
+  step,
+  submit,
+  type TestCave,
+  until,
+} from "./helpers.js";
 
 let t: TestCave;
 afterEach(async () => {
@@ -167,6 +176,77 @@ describe("agent loop", () => {
     const done = await t.waitFor(cycle.id);
     expect(done.status).toBe("stopped");
     expect(Date.now() - started).toBeLessThan(5000);
+  });
+
+  it("can be stopped while the model is streaming, without an unhandled rejection", async () => {
+    t = await createTestCave();
+    const unhandled: unknown[] = [];
+    const onUnhandled = (err: unknown) => unhandled.push(err);
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      await t.createAgent({ slug: "talker", model: "m/talker" });
+      t.setScript("m/talker", (_n, options) =>
+        hangingStream(
+          step(p.text("Let me think about this for a long time.")).slice(0, 3),
+          options.abortSignal,
+        ),
+      );
+      const cycle = await t.startCycle({ agent: "talker", prompt: "x" });
+      await until(() => t.events(cycle.id).some((e) => e.type === "step.start"));
+      const r = await t.req("POST", `/cycles/${cycle.id}/stop`);
+      expect(r.status).toBe(200);
+      const done = await t.waitFor(cycle.id);
+      expect(done.status).toBe("stopped");
+      expect(done.error?.code).toBe("stopped");
+      // A stray rejection from the cancelled stream shows up a few ticks later.
+      await new Promise((r) => setTimeout(r, 100));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
+  it("stopping one cycle leaves another one's model call running", async () => {
+    t = await createTestCave();
+    await t.createAgent({ slug: "first", model: "m/first" });
+    await t.createAgent({ slug: "second", model: "m/second" });
+    t.setScript("m/first", (_n, options) =>
+      hangingStream(step(p.text("Working on it.")).slice(0, 3), options.abortSignal),
+    );
+    // The second cycle's first model call streams until `finish()`, then submits.
+    let finish!: () => void;
+    const finished = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    let secondSignal: AbortSignal | undefined;
+    t.setScript("m/second", (n, options) => {
+      if (n > 0) return submit("unused");
+      secondSignal = options.abortSignal;
+      const [head, tail] = [step(p.text("Still going.")), submit("Second is done.")];
+      return new ReadableStream({
+        start(controller) {
+          for (const part of head.slice(0, 3)) controller.enqueue(part);
+          void finished.then(() => {
+            for (const part of [...head.slice(3, -1), ...tail.slice(1)]) controller.enqueue(part);
+            controller.close();
+          });
+        },
+      });
+    });
+    const first = await t.startCycle({ agent: "first", prompt: "x" });
+    const second = await t.startCycle({ agent: "second", prompt: "y" });
+    await until(() => !!t.calls["m/first"]?.length && !!t.calls["m/second"]?.length);
+
+    await t.req("POST", `/cycles/${first.id}/stop`);
+    expect((await t.waitFor(first.id)).status).toBe("stopped");
+    expect(secondSignal?.aborted).toBe(false);
+    expect(t.cave.ctx.cycles.get(second.id).status).toBe("running");
+
+    finish();
+    const done = await t.waitFor(second.id);
+    expect(done.status).toBe("completed");
+    expect(done.answer).toEqual({ format: "markdown", text: "Second is done." });
+    expect(t.calls["m/second"]).toHaveLength(1);
   });
 
   it("follow-ups keep the memory and the files", async () => {

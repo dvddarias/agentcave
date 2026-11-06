@@ -34,6 +34,7 @@ import type { InternalSettings } from "../settings.js";
 import { prepareAnswerSchema } from "./answer-schema.js";
 import { Budget, RunAbort, RunError } from "./budget.js";
 import { ParagraphChunker } from "./chunker.js";
+import { drainOnAbort } from "./drain-on-abort.js";
 import { createHttpCommands, type StoredCommand } from "./http-commands.js";
 import {
   ImageError,
@@ -329,9 +330,12 @@ export class Runner {
       sessionId: cycle.root_id,
     });
     const model =
-      vision && typeof baseModel !== "string"
-        ? wrapLanguageModel({ model: baseModel, middleware: toolImagesMiddleware })
-        : baseModel;
+      typeof baseModel === "string"
+        ? baseModel
+        : wrapLanguageModel({
+            model: baseModel,
+            middleware: vision ? [toolImagesMiddleware, drainOnAbort] : drainOnAbort,
+          });
 
     const agent = new ToolLoopAgent({
       model,
