@@ -4,9 +4,12 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
 import { api, keys } from "../../lib/api";
 import { formatBytes, formatCost, formatDate, formatDuration, formatTokens } from "../../lib/format";
+import type { HttpCall } from "../../lib/timeline";
+import { CommandCard } from "../CommandCard";
 import { IconDownload, IconExternal, IconFile, IconX } from "../icons";
 import { CodeBlock } from "../Markdown";
 import { CopyButton, cx, Pill, Spinner, StatusBadge } from "../ui";
+import { callOutcome, formatMs, HttpCallDetail } from "./HttpCalls";
 
 const STATUS_COLOR: Record<WorkspaceFile["status"], string> = {
   added: "text-emerald-300",
@@ -232,7 +235,44 @@ function Row({ k, children }: { k: string; children: React.ReactNode }) {
   );
 }
 
-export function DetailsPanel({ cycle, refreshKey }: { cycle: Cycle; refreshKey: string }) {
+function HttpCallRow({ call, turn }: { call: HttpCall; turn: number }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <li className="rounded-lg border border-cave-750 text-xs">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left hover:bg-cave-800"
+      >
+        <span className="text-cave-500">turn {turn + 1}</span>
+        <span className="min-w-0 flex-1 truncate font-mono text-cave-200">{call.command}</span>
+        <span className={cx("font-mono", call.error ? "text-rose-300" : "text-emerald-300")}>
+          {callOutcome(call)}
+        </span>
+        <span className="w-14 text-right font-mono text-cave-500">{formatMs(call.ms)}</span>
+      </button>
+      {open ? (
+        <div className="border-t border-cave-750 p-2.5">
+          <HttpCallDetail call={call} />
+        </div>
+      ) : null}
+    </li>
+  );
+}
+
+export function DetailsPanel({
+  cycle,
+  refreshKey,
+  events,
+}: {
+  cycle: Cycle;
+  refreshKey: string;
+  events: CycleEvent[];
+}) {
+  const httpCalls = useMemo(
+    () => events.flatMap((e) => (e.type === "http.call" ? [{ call: e.data, turn: e.turn, seq: e.seq }] : [])),
+    [events],
+  );
   const turns = useQuery({
     queryKey: [...keys.turns(cycle.id), refreshKey],
     queryFn: () => api.cycles.turns(cycle.id),
@@ -349,6 +389,39 @@ export function DetailsPanel({ cycle, refreshKey }: { cycle: Cycle; refreshKey: 
           </tbody>
         </table>
       </div>
+
+      {cycle.commands.length > 0 ? (
+        <>
+          <h3 className="mt-5 mb-2 text-[11px] font-semibold tracking-wider text-cave-400 uppercase">
+            HTTP commands
+          </h3>
+          <div className="space-y-2">
+            {cycle.commands.map((c) => (
+              <CommandCard key={c.name} command={c} defaultOpen={cycle.commands.length === 1} />
+            ))}
+          </div>
+        </>
+      ) : null}
+
+      {cycle.commands.length > 0 || httpCalls.length > 0 ? (
+        <>
+          <h3 className="mt-5 mb-2 text-[11px] font-semibold tracking-wider text-cave-400 uppercase">
+            HTTP calls ({httpCalls.length})
+          </h3>
+          {httpCalls.length === 0 ? (
+            <div className="text-xs text-cave-500">No calls yet.</div>
+          ) : (
+            <ul className="space-y-1">
+              {httpCalls.length > 300 ? (
+                <li className="text-[11px] text-cave-500">The last 300 are shown.</li>
+              ) : null}
+              {httpCalls.slice(-300).map((c) => (
+                <HttpCallRow key={c.seq} call={c.call} turn={c.turn} />
+              ))}
+            </ul>
+          )}
+        </>
+      ) : null}
 
       {children.data && children.data.length > 0 ? (
         <>

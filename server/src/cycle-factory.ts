@@ -1,9 +1,11 @@
-import type { FileInput, JsonSchema, Limits, ReasoningEffort } from "@agentcave/client";
+import type { FileInput, HttpCommand, JsonSchema, Limits, ReasoningEffort } from "@agentcave/client";
+import type { VersionRow } from "./agents.js";
 import type { Manifest } from "./blobs.js";
 import type { Ctx } from "./context.js";
 import type { CreateCycleParams, CycleRow } from "./cycle-store.js";
 import { one } from "./db.js";
 import { assertValidSchema } from "./engine/answer-schema.js";
+import { checkCommands, type StoredCommand, usageLine } from "./engine/http-commands.js";
 import { buildSystemPrompt, type SubagentInfo, subagentToolName } from "./engine/prompt.js";
 import { badRequest, conflict } from "./errors.js";
 import { decodeFileContent, normalizeRelPath } from "./paths.js";
@@ -21,6 +23,8 @@ export interface NewCycleRequest {
   outputSchema?: JsonSchema | null;
   labels?: Record<string, string>;
   webhookUrl?: string | null;
+  /** HTTP commands (sub-agents get none). */
+  commands?: HttpCommand[];
   source: CreateCycleParams["source"];
   parent?: CycleRow;
   rerunOf?: string;
@@ -37,6 +41,36 @@ export async function storeFiles(ctx: Ctx, files: FileInput[] | undefined): Prom
   return manifest;
 }
 
+/** The exact system prompt for a cycle: the agent version's Markdown + the AgentCave environment section. */
+export function cycleSystemPrompt(
+  ctx: Ctx,
+  versionRow: VersionRow,
+  o: { outputSchema: JsonSchema | null; commands: StoredCommand[]; isSubagent: boolean },
+): string {
+  const config = ctx.agents.config(versionRow);
+  const subagents: SubagentInfo[] = [];
+  for (const slug of config.subagents) {
+    const row = one<{ name: string; description: string; archived: number }>(
+      ctx.db,
+      "SELECT name, description, archived FROM agents WHERE slug = ?",
+      slug,
+    );
+    if (!row || row.archived) continue;
+    subagents.push({ slug, toolName: subagentToolName(slug), name: row.name, description: row.description });
+  }
+  return buildSystemPrompt({
+    agentPrompt: config.systemPrompt,
+    internet: config.internet,
+    javascript: config.javascript,
+    python: config.python,
+    agentFiles: ctx.agents.versionFiles(versionRow.id).map((f) => f.path),
+    subagents,
+    commands: o.commands.map((c) => ({ name: c.name, description: c.description, usage: usageLine(c) })),
+    outputSchema: o.outputSchema,
+    isSubagent: o.isSubagent,
+  });
+}
+
 /** Resolves the agent version and every effective setting, and builds the exact system prompt. */
 export async function newCycleParams(ctx: Ctx, req: NewCycleRequest): Promise<CreateCycleParams> {
   const agentRow = ctx.agents.getRow(req.agent);
@@ -49,26 +83,11 @@ export async function newCycleParams(ctx: Ctx, req: NewCycleRequest): Promise<Cr
 
   const outputSchema = req.outputSchema !== undefined ? req.outputSchema : config.outputSchema;
   if (outputSchema) assertValidSchema(outputSchema);
+  const commands = req.parent ? [] : await checkCommands(req.commands ?? []);
 
-  const subagents: SubagentInfo[] = [];
-  for (const slug of config.subagents) {
-    const row = one<{ name: string; description: string; archived: number }>(
-      ctx.db,
-      "SELECT name, description, archived FROM agents WHERE slug = ?",
-      slug,
-    );
-    if (!row || row.archived) continue;
-    subagents.push({ slug, toolName: subagentToolName(slug), name: row.name, description: row.description });
-  }
-
-  const systemPrompt = buildSystemPrompt({
-    agentPrompt: config.systemPrompt,
-    internet: config.internet,
-    javascript: config.javascript,
-    python: config.python,
-    agentFiles: ctx.agents.versionFiles(versionRow.id).map((f) => f.path),
-    subagents,
+  const systemPrompt = cycleSystemPrompt(ctx, versionRow, {
     outputSchema,
+    commands,
     isSubagent: !!req.parent,
   });
 
@@ -91,6 +110,7 @@ export async function newCycleParams(ctx: Ctx, req: NewCycleRequest): Promise<Cr
     outputSchema,
     labels: req.labels ?? {},
     webhookUrl: req.webhookUrl ?? null,
+    commands,
     systemPrompt,
     prompt: req.prompt,
     inputManifest,

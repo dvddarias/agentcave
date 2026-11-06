@@ -69,8 +69,10 @@ export const ROUTES: RouteDoc[] = [
     path: "/cycles",
     tag: "Cycles",
     summary: "Start a cycle",
-    description:
+    description: [
       'Queues an agentic cycle. Files go inside the JSON (`encoding: "base64"` for binary). Returns immediately with status `queued`.',
+      "`commands` (optional, max 32) gives the agent HTTP commands: each one is a real command in the sandbox (`get_order_status --orderId A1`) that works with pipes, loops and redirects. AgentCave checks the flags against `inputSchema` and POSTs `{ command, input, cycleId, turn, callId, labels }` to `url` from the server, with `headers` (secret: never shown to the model or returned, only masked) and, when a signing secret is set, `X-AgentCave-Signature`. The response body is the command's stdout. The agent's internet mode does not apply, and any URL works, internal addresses included. 400 if a name clashes with a sandbox command or shell builtin, or a schema is invalid.",
+    ].join("\n\n"),
     body: startCycleSchema,
     returns: "Cycle",
     status: 202,
@@ -141,7 +143,7 @@ export const ROUTES: RouteDoc[] = [
     tag: "Cycles",
     summary: "Send a follow-up message",
     description:
-      "Starts a new turn with the same memory and sandbox files. Only when the cycle is finished (409 otherwise).",
+      "Starts a new turn with the same memory and sandbox files. Only when the cycle is finished (409 otherwise). `commands` replaces the cycle's HTTP commands from this turn on (e.g. a fresh token; `[]` removes them); left out, they stay.",
     params: [id],
     body: followUpSchema,
     returns: "Cycle",
@@ -164,7 +166,8 @@ export const ROUTES: RouteDoc[] = [
     path: "/cycles/{id}/rerun",
     tag: "Cycles",
     summary: "Re-run the first prompt as a new cycle",
-    description: "Same input files and prompt; optionally another agent version, model, reasoning or limits.",
+    description:
+      "Same input files, prompt and HTTP commands; optionally another agent version, model, reasoning, limits or `commands`.",
     params: [id],
     body: rerunSchema,
     returns: "Cycle",

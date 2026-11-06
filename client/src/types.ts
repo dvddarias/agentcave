@@ -276,6 +276,74 @@ export interface FileChanges {
   deleted: string[];
 }
 
+// ---------------------------------------------------------------------------
+// HTTP commands
+// ---------------------------------------------------------------------------
+
+/** At most this many HTTP commands per cycle. */
+export const MAX_HTTP_COMMANDS = 32;
+/** `timeoutSec` of an HTTP command: default and maximum. */
+export const HTTP_COMMAND_TIMEOUT_SEC = { default: 20, max: 120 } as const;
+
+/**
+ * A command the caller gives a cycle. Inside the sandbox it is a real command, e.g.
+ * `get_order_status --orderId A1`, that works with pipes, loops and redirects. AgentCave runs it on
+ * the server, outside the sandbox: it checks the flags against `inputSchema`, then POSTs an
+ * `HttpCommandCall` to `url` with `headers`. The response body becomes the command's stdout.
+ */
+export interface HttpCommand {
+  /**
+   * `^[a-z][a-z0-9_-]{0,63}$`, unique in the cycle. It can't be the name of a sandbox command
+   * (`ls`, `curl`, `jq`…) or a shell builtin.
+   */
+  name: string;
+  /** What it does and what it prints. The model sees it in the system prompt and in `--help`. */
+  description: string;
+  /**
+   * JSON Schema of the input. The root must be an object: each top-level property becomes a flag
+   * (`--orderId A1`). Property descriptions, `enum`s and `examples` show up in `--help`.
+   */
+  inputSchema: JsonSchema;
+  /**
+   * http(s) URL that gets the POST. The AgentCave server calls it, so the agent's internet mode
+   * doesn't apply and any address works, internal ones included.
+   */
+  url: string;
+  /**
+   * Sent with every call, e.g. `{ "Authorization": "Bearer …" }`. Secret: stored on the cycle
+   * (restarts need them) but never shown to the model or returned by the API (values are masked).
+   */
+  headers?: Record<string, string>;
+  /** Seconds to wait for a response. Default 20, max 120. */
+  timeoutSec?: number;
+}
+
+/** An HTTP command as the API returns it: header values are masked (`"••••"`). */
+export interface CycleCommand {
+  name: string;
+  description: string;
+  inputSchema: JsonSchema;
+  url: string;
+  headers: Record<string, string>;
+  timeoutSec: number;
+}
+
+/**
+ * Body of the POST an HTTP command sends to its `url` (`content-type: application/json`). With a
+ * signing secret in Settings it carries `X-AgentCave-Signature: sha256=<hmac of the body>`, like webhooks.
+ */
+export interface HttpCommandCall {
+  command: string;
+  /** The flags, converted and checked against the command's `inputSchema`. */
+  input: Record<string, unknown>;
+  cycleId: string;
+  /** Turn index (0 = first prompt). */
+  turn: number;
+  /** Unique per call; the `http.call` event carries the same id. */
+  callId: string;
+  labels: Record<string, string>;
+}
+
 export interface StartCycleRequest {
   /** Agent slug. */
   agent: string;
@@ -289,6 +357,8 @@ export interface StartCycleRequest {
   labels?: Record<string, string>;
   /** Called on turn/cycle completion. */
   webhookUrl?: string;
+  /** Commands that call your own systems (see `HttpCommand`). Kept for follow-ups, continues and restarts. */
+  commands?: HttpCommand[];
   /** Set by the web UI; API callers can leave it out. */
   source?: "api" | "ui";
 }
@@ -296,6 +366,11 @@ export interface StartCycleRequest {
 export interface FollowUpRequest {
   prompt: string;
   files?: FileInput[];
+  /**
+   * Replaces the cycle's commands from this turn on (e.g. to refresh an expired token); `[]`
+   * removes them. Left out, the current commands stay.
+   */
+  commands?: HttpCommand[];
 }
 
 export interface RerunRequest {
@@ -304,6 +379,8 @@ export interface RerunRequest {
   outputSchema?: JsonSchema | null;
   labels?: Record<string, string>;
   webhookUrl?: string | null;
+  /** Replaces the commands for the new cycle. Left out, it gets the original cycle's commands. */
+  commands?: HttpCommand[];
 }
 
 /**
@@ -343,6 +420,8 @@ export interface Cycle {
   outputSchema: JsonSchema | null;
   labels: Record<string, string>;
   webhookUrl: string | null;
+  /** The HTTP commands of the latest turn, header values masked. */
+  commands: CycleCommand[];
   source: CycleSource;
   parentId: string | null;
   rootId: string;
@@ -472,6 +551,30 @@ export type CycleEventPayload =
         exitCode: number | null;
         truncated: boolean;
         ms: number;
+      };
+    }
+  /**
+   * An HTTP command made a call: one event per call, also when it failed. `toolCallId` is the
+   * `bash` tool call whose command line ran it. `status` is null when no response came (timeout,
+   * network error, stopped). Headers are never included.
+   */
+  | {
+      type: "http.call";
+      data: {
+        step: number;
+        toolCallId: string | null;
+        /** Same as `HttpCommandCall.callId`. */
+        callId: string;
+        command: string;
+        input: Record<string, unknown>;
+        status: number | null;
+        ms: number;
+        /** Size of the response body. */
+        bytes: number;
+        /** The first 2 KB of the response body. */
+        preview: string;
+        /** Why the command failed (`"HTTP 500"`, `"timed out after 20s"`…), or null. */
+        error: string | null;
       };
     }
   | { type: "subagent.start"; data: { callId: string; childId: string; agent: string; prompt: string } }

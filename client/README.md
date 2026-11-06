@@ -8,7 +8,7 @@ Straight from the GitHub Releases:
 
 ```bash
 # a fixed version (recommended)
-npm install https://github.com/dvddarias/agentcave/releases/download/v0.2.4/agentcave-client-0.2.4.tgz
+npm install https://github.com/dvddarias/agentcave/releases/download/v0.3.0/agentcave-client-0.3.0.tgz
 # or the build of the latest push to main (re-run this command to update)
 npm install https://github.com/dvddarias/agentcave/releases/download/client-latest/agentcave-client.tgz
 ```
@@ -48,6 +48,27 @@ if (done.error?.code.startsWith("limit_")) {
 await cave.cycles.followUp(cycle.id, { prompt: "Now fix them." });
 await cave.cycles.stop(cycle.id);
 const zip = await cave.cycles.downloadZip(cycle.id, { changedOnly: true });
+```
+
+HTTP commands give the agent commands that call your own systems (AgentCave POSTs an `HttpCommandCall` to your URL from the server; the headers never reach the model):
+
+```ts
+const orderStatus: HttpCommand = {
+  name: "get_order_status",
+  description: "Get the current status of an order by its id. Prints JSON: { status, items[], updatedAt }.",
+  inputSchema: { type: "object", properties: { orderId: { type: "string" } }, required: ["orderId"] },
+  url: "https://shop.example.com/agent-tools/order-status",
+  headers: { Authorization: `Bearer ${token}` },
+};
+const support = await cave.cycles.start({ agent: "support-agent", prompt: "Where is A1?", commands: [orderStatus] });
+// Later, with a fresh token (replaces the commands from this turn on)
+await cave.cycles.followUp(support.id, {
+  prompt: "And B2?",
+  commands: [{ ...orderStatus, headers: { Authorization: `Bearer ${freshToken}` } }],
+});
+for await (const e of cave.cycles.events(support.id)) {
+  if (e.type === "http.call") console.log(e.data.command, e.data.status, `${e.data.ms} ms`);
+}
 ```
 
 Errors are thrown as `AgentCaveError` with `status`, `code` and `message`.

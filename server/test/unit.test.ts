@@ -240,6 +240,7 @@ describe("prompts", () => {
           description: "Writes tests",
         },
       ],
+      commands: [],
       outputSchema: null,
       isSubagent: false,
     });
@@ -250,6 +251,7 @@ describe("prompts", () => {
     expect(s).not.toContain("python3");
     expect(s).toContain("`ask_test_writer`");
     expect(s).toContain("submit_answer");
+    expect(s).not.toContain("Commands for this task");
   });
   it("lists files in the user message", () => {
     const m = buildUserMessage("Do it", { "a.txt": { sha256: "x", size: 2048 } });

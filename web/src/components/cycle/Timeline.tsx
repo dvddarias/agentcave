@@ -20,6 +20,7 @@ import {
 } from "../icons";
 import { CodeBlock, Markdown } from "../Markdown";
 import { cx, Pill, Spinner, StatusBadge } from "../ui";
+import { HttpCallChips } from "./HttpCalls";
 
 export function SystemPromptCard({
   text,
@@ -281,6 +282,7 @@ function ToolCard({ item }: { item: Extract<TimelineItem, { kind: "tool" }> }) {
           className={cx("shrink-0 text-cave-500 transition-transform", open && "rotate-90")}
         />
       </button>
+      {item.httpCalls?.length ? <HttpCallChips calls={item.httpCalls} /> : null}
       {open ? (
         <div className="space-y-2 border-t border-cave-750 bg-cave-925 p-3">
           {item.tool === "bash" && s.title.includes("\n") ? <CodeBlock code={s.title} lang="bash" /> : null}

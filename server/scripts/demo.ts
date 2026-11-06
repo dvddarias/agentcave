@@ -1,6 +1,7 @@
 /**
- * Demo mode: runs AgentCave with a scripted fake model (no OpenRouter token, $0) and two sample agents,
- * so you can explore the UI and watch thinking/text/tool calls stream in.
+ * Demo mode: runs AgentCave with a scripted fake model (no OpenRouter token, $0) and three sample agents,
+ * so you can explore the UI and watch thinking/text/tool calls stream in. The support agent uses an HTTP
+ * command served by this script itself (a tiny fake shop at /demo-shop/orders).
  *
  *   npm run demo            → http://localhost:7420
  */
@@ -132,9 +133,34 @@ const TEST_WRITER: ((o: LanguageModelV4CallOptions) => Part[])[] = [
   ],
 ];
 
+const SUPPORT: ((o: LanguageModelV4CallOptions) => Part[])[] = [
+  () => [
+    ...reasoning(
+      "The customer asks about two orders. I have `get_order_status`, so I can look both up in one command and keep only what matters with jq.",
+    ),
+    call("bash", {
+      command: `for id in A1 B2; do get_order_status --orderId "$id"; done | jq -c '{id, status, items: (.items | length)}'`,
+    }),
+    finish("tool-calls", 0.0018, 2100, 160, 50),
+  ],
+  () => [
+    ...reasoning("A1 shipped, B2 is pending. They also mentioned an old order Z9; let me check it too."),
+    call("bash", { command: 'get_order_status --orderId Z9; echo "exit=$?"' }),
+    finish("tool-calls", 0.0012, 2300, 90, 20),
+  ],
+  () => [
+    call("submit_answer", {
+      answer:
+        "Hi! Here is where your orders are:\n\n- **A1**: shipped (2 items).\n- **B2**: still pending (1 item); it should ship soon.\n- **Z9**: I couldn't find this order. Could you check the number?",
+    }),
+    finish("tool-calls", 0.0015, 2500, 120, 0),
+  ],
+];
+
 const SCRIPTS: Record<string, ((o: LanguageModelV4CallOptions) => Part[])[]> = {
   "demo/reviewer": REVIEWER,
   "demo/test-writer": TEST_WRITER,
+  "demo/support": SUPPORT,
 };
 
 function demoModel(req: ModelRequest) {
@@ -171,6 +197,29 @@ export function parseConfig(text: string) {
   return JSON.parse(text);
 }
 `;
+
+const ORDERS: Record<string, unknown> = {
+  A1: {
+    id: "A1",
+    status: "shipped",
+    items: [
+      { sku: "BOOK-12", qty: 1 },
+      { sku: "PEN-3", qty: 2 },
+    ],
+    updatedAt: "2026-11-02T09:14:00Z",
+  },
+  B2: { id: "B2", status: "pending", items: [{ sku: "LAMP-7", qty: 1 }], updatedAt: "2026-11-05T16:40:00Z" },
+};
+
+/** Stands in for the caller's own system, so the HTTP command demo needs nothing else. */
+async function demoShop(req: Request): Promise<Response> {
+  if (req.headers.get("authorization") !== "Bearer demo-token")
+    return new Response("not allowed", { status: 401 });
+  const { input } = (await req.json()) as { input: { orderId?: string } };
+  await new Promise((r) => setTimeout(r, 150));
+  const order = ORDERS[String(input.orderId)];
+  return Response.json(order ?? { error: `no order ${input.orderId}` }, { status: order ? 200 : 404 });
+}
 
 async function main() {
   const here = path.dirname(fileURLToPath(import.meta.url));
@@ -215,9 +264,23 @@ async function main() {
       },
     });
   }
+  try {
+    agents.getRow("support-agent");
+  } catch {
+    await agents.create({
+      slug: "support-agent",
+      name: "Support Agent",
+      description: "Answers customers about their orders, using the shop's order-status command.",
+      model: "demo/support",
+      reasoning: "low",
+      systemPrompt: "# Role\n\nYou answer customers about their orders. Be short and friendly.",
+    });
+  }
   cave.start();
   const port = Number(process.env.PORT ?? 7420);
-  serve({ fetch: cave.app.fetch, port }, () => {
+  const fetchDemo = (req: Request) =>
+    new URL(req.url).pathname === "/demo-shop/orders" ? demoShop(req) : cave.app.fetch(req);
+  serve({ fetch: fetchDemo, port }, () => {
     log.info(
       `AgentCave DEMO on http://localhost:${port}${normalizeBasePath(process.env.BASE_PATH)} (fake model, no token needed)`,
       { dataDir },
@@ -230,6 +293,28 @@ async function main() {
         prompt: "Please review `app.ts`. Report only real bugs and make sure they get tests.",
         files: [{ path: "app.ts", content: APP_TS }],
         labels: { demo: "true" },
+        source: "api",
+      });
+      await cave.cycles.start({
+        agent: "support-agent",
+        prompt: "Hi, where are my orders A1 and B2? Also an older one, Z9.",
+        labels: { demo: "true", customer: "c-1042" },
+        commands: [
+          {
+            name: "get_order_status",
+            description:
+              "Get the current status of an order by its id. Prints JSON: { id, status, items[], updatedAt }.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                orderId: { type: "string", description: "The order id, e.g. A1", examples: ["A1"] },
+              },
+              required: ["orderId"],
+            },
+            url: `http://127.0.0.1:${port}/demo-shop/orders`,
+            headers: { Authorization: "Bearer demo-token" },
+          },
+        ],
         source: "api",
       });
     }, 1500);

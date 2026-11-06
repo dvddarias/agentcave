@@ -1,6 +1,8 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import type { AgentInternet } from "@agentcave/client";
+import type { Tool } from "ai";
 import { createBashTool } from "bash-tool";
-import { Bash, InMemoryFs, MountableFs, OverlayFs, ReadWriteFs } from "just-bash";
+import { Bash, type Command, InMemoryFs, MountableFs, OverlayFs, ReadWriteFs } from "just-bash";
 
 export interface SandboxOptions {
   workspaceDir: string;
@@ -11,6 +13,15 @@ export interface SandboxOptions {
   commandTimeoutMs: number;
   outputCapBytes: number;
   signal: AbortSignal;
+  /** Extra commands that run in the server process (HTTP commands). */
+  customCommands?: Command[];
+}
+
+const bashCall = new AsyncLocalStorage<string>();
+
+/** The `bash` tool call whose command line is running (inside a custom command), if any. */
+export function currentToolCallId(): string | null {
+  return bashCall.getStore() ?? null;
 }
 
 export interface CommandResult {
@@ -48,7 +59,9 @@ export async function createSandbox(o: SandboxOptions) {
     network,
     javascript: o.javascript,
     python: o.python,
+    // Per `exec`, so a whole command line (a loop of HTTP command calls included) shares it.
     executionLimits: { maxExecutionTimeMs: o.commandTimeoutMs },
+    customCommands: o.customCommands,
   });
   await bash.exec("mkdir -p /tmp/agentcave");
 
@@ -102,6 +115,16 @@ export async function createSandbox(o: SandboxOptions) {
     destination: "/workspace",
     maxOutputLength: cap * 2,
   });
+  // Commands it runs can tell which tool call they belong to (the UI shows HTTP calls on their bash card).
+  const bashTool = tools.bash as Tool;
+  const execute = bashTool.execute;
+  if (execute) {
+    tools.bash = {
+      ...bashTool,
+      execute: (input: unknown, options: { toolCallId: string }) =>
+        bashCall.run(options.toolCallId, () => execute(input, options as never)),
+    } as typeof tools.bash;
+  }
   return { bash, tools, adapter };
 }
 

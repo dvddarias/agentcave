@@ -1,7 +1,15 @@
-import { REASONING_EFFORTS, type ReasoningEffort, type StartCycleRequest } from "@agentcave/client";
+import {
+  HTTP_COMMAND_TIMEOUT_SEC,
+  type HttpCommand,
+  MAX_HTTP_COMMANDS,
+  REASONING_EFFORTS,
+  type ReasoningEffort,
+  type StartCycleRequest,
+} from "@agentcave/client";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
+import { CommandCard } from "../components/CommandCard";
 import { JsonEditor } from "../components/Editors";
 import { FileDrop } from "../components/FileDrop";
 import { IconCode, IconPlay, IconPlus, IconX } from "../components/icons";
@@ -10,6 +18,7 @@ import { ModelPicker } from "../components/ModelPicker";
 import {
   Button,
   Card,
+  cx,
   Empty,
   ErrorBox,
   Field,
@@ -24,6 +33,82 @@ import { api, keys, publicUrl } from "../lib/api";
 import type { PickedFile } from "../lib/files";
 
 let labelSeq = 0;
+
+const EXAMPLE_COMMANDS = `[
+  {
+    "name": "get_order_status",
+    "description": "Get the current status of an order by its id. Prints JSON: { status, items[], updatedAt }.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "orderId": { "type": "string", "description": "The order id, e.g. A1" }
+      },
+      "required": ["orderId"]
+    },
+    "url": "https://shop.example.com/agent-tools/order-status",
+    "headers": { "Authorization": "Bearer <token>" },
+    "timeoutSec": 20
+  },
+  {
+    "name": "search_orders",
+    "description": "Find a customer's orders. Prints a JSON array of { id, status, total }.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "customerId": { "type": "string", "description": "The customer id", "examples": ["c-1042"] },
+        "status": { "type": "string", "enum": ["pending", "shipped", "delivered"], "description": "Only orders with this status" },
+        "limit": { "type": "integer", "default": 20, "description": "How many orders at most" },
+        "tag": { "type": "array", "items": { "type": "string" }, "description": "Only orders with all these tags" },
+        "includeItems": { "type": "boolean", "description": "Add each order's items" }
+      },
+      "required": ["customerId"]
+    },
+    "url": "https://shop.example.com/agent-tools/search-orders",
+    "headers": { "Authorization": "Bearer <token>" }
+  }
+]`;
+
+/** Parses the Commands editor. The server checks the rest (name clashes, schema validity). */
+function parseCommands(text: string): { commands: HttpCommand[] } | { error: string } {
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch (e) {
+    return { error: `Not valid JSON: ${e instanceof Error ? e.message : String(e)}` };
+  }
+  if (!Array.isArray(value)) return { error: "Commands must be a JSON array: [ { name, description, … } ]" };
+  if (value.length > MAX_HTTP_COMMANDS) return { error: `At most ${MAX_HTTP_COMMANDS} commands` };
+  const names = new Set<string>();
+  for (const [i, c] of value.entries()) {
+    const at = `Command ${i + 1}`;
+    if (!c || typeof c !== "object" || Array.isArray(c)) return { error: `${at} must be an object` };
+    const o = c as Record<string, unknown>;
+    if (typeof o.name !== "string" || !/^[a-z][a-z0-9_-]{0,63}$/.test(o.name))
+      return { error: `${at}: name must match ^[a-z][a-z0-9_-]{0,63}$` };
+    if (names.has(o.name)) return { error: `${at}: the name ${o.name} is used twice` };
+    names.add(o.name);
+    if (typeof o.description !== "string" || !o.description.trim())
+      return { error: `${o.name}: description is required` };
+    const schema = o.inputSchema as Record<string, unknown> | undefined;
+    if (!schema || typeof schema !== "object" || schema.type !== "object")
+      return { error: `${o.name}: inputSchema must be a JSON Schema with "type": "object"` };
+    if (typeof o.url !== "string" || !/^https?:\/\/\S+$/.test(o.url))
+      return { error: `${o.name}: url must be an http(s) URL` };
+    if (
+      o.headers !== undefined &&
+      (!o.headers ||
+        typeof o.headers !== "object" ||
+        Object.values(o.headers).some((v) => typeof v !== "string"))
+    )
+      return { error: `${o.name}: headers must be an object of strings` };
+    if (
+      o.timeoutSec !== undefined &&
+      (typeof o.timeoutSec !== "number" || o.timeoutSec <= 0 || o.timeoutSec > HTTP_COMMAND_TIMEOUT_SEC.max)
+    )
+      return { error: `${o.name}: timeoutSec must be between 0 and ${HTTP_COMMAND_TIMEOUT_SEC.max}` };
+  }
+  return { commands: value as HttpCommand[] };
+}
 
 export function PlaygroundPage() {
   const [params] = useSearchParams();
@@ -43,6 +128,14 @@ export function PlaygroundPage() {
   );
   const [labels, setLabels] = useState<{ id: number; k: string; v: string }[]>([]);
   const [webhookUrl, setWebhookUrl] = useState("");
+  const [useCommands, setUseCommands] = useState(false);
+  const [commandsText, setCommandsText] = useState(EXAMPLE_COMMANDS);
+  const [commandsView, setCommandsView] = useState<"preview" | "json">("preview");
+  const parsedCommands = useMemo(
+    () => (useCommands ? parseCommands(commandsText) : null),
+    [useCommands, commandsText],
+  );
+  const commandsError = parsedCommands && "error" in parsedCommands ? parsedCommands.error : null;
   const [curlOpen, setCurlOpen] = useState(false);
 
   useEffect(() => {
@@ -77,6 +170,7 @@ export function PlaygroundPage() {
       ...(outputSchema !== undefined ? { outputSchema } : {}),
       ...(Object.keys(labelObj).length ? { labels: labelObj } : {}),
       ...(webhookUrl.trim() ? { webhookUrl: webhookUrl.trim() } : {}),
+      ...(parsedCommands && "commands" in parsedCommands ? { commands: parsedCommands.commands } : {}),
     };
   }, [
     agent,
@@ -91,6 +185,7 @@ export function PlaygroundPage() {
     schema,
     labels,
     webhookUrl,
+    parsedCommands,
   ]);
 
   const start = useMutation({
@@ -146,7 +241,8 @@ export function PlaygroundPage() {
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && prompt.trim()) start.mutate();
+                  if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && prompt.trim() && !commandsError)
+                    start.mutate();
                 }}
                 placeholder="What should the agent do? (Ctrl+Enter to run)"
                 className="font-mono text-[13px]"
@@ -157,11 +253,29 @@ export function PlaygroundPage() {
             <div className="mb-2 text-xs font-medium text-cave-300">Files (put into /workspace)</div>
             <FileDrop files={files} onChange={setFiles} />
           </Card>
+          <Card className="space-y-3 p-4">
+            <Toggle
+              checked={useCommands}
+              onChange={setUseCommands}
+              label="Commands"
+              hint="HTTP commands the agent can run like any other (get_order_status --orderId A1). AgentCave POSTs to your URL from the server; the headers stay secret."
+            />
+            {useCommands ? (
+              <CommandsInput
+                text={commandsText}
+                onChange={setCommandsText}
+                parsed={parsedCommands}
+                view={commandsView}
+                onView={setCommandsView}
+              />
+            ) : null}
+          </Card>
           <ErrorBox error={start.error} />
-          <div className="flex justify-end">
+          <div className="flex items-center justify-end gap-3">
+            {commandsError ? <span className="text-xs text-rose-300">Fix the commands first.</span> : null}
             <Button
               variant="primary"
-              disabled={!prompt.trim() || !agent}
+              disabled={!prompt.trim() || !agent || !!commandsError}
               loading={start.isPending}
               onClick={() => start.mutate()}
             >
@@ -284,6 +398,76 @@ export function PlaygroundPage() {
         </div>
       </div>
       <CurlModal open={curlOpen} onClose={() => setCurlOpen(false)} request={request} />
+    </div>
+  );
+}
+
+/** The Playground's commands: shown as cards (what the agent gets), edited as JSON. */
+function CommandsInput({
+  text,
+  onChange,
+  parsed,
+  view,
+  onView,
+}: {
+  text: string;
+  onChange: (v: string) => void;
+  parsed: ReturnType<typeof parseCommands> | null;
+  view: "preview" | "json";
+  onView: (v: "preview" | "json") => void;
+}) {
+  const error = parsed && "error" in parsed ? parsed.error : null;
+  const commands = parsed && "commands" in parsed ? parsed.commands : [];
+  return (
+    <div className="space-y-2.5">
+      <div className="flex items-center gap-2">
+        <div className="flex gap-0.5 rounded-lg bg-cave-900 p-0.5">
+          {(["preview", "json"] as const).map((v) => (
+            <button
+              key={v}
+              type="button"
+              onClick={() => onView(v)}
+              className={cx(
+                "rounded-md px-2.5 py-0.5 text-xs",
+                view === v ? "bg-cave-700 text-cave-100" : "text-cave-400 hover:text-cave-200",
+              )}
+            >
+              {v === "preview" ? "Preview" : "JSON"}
+            </button>
+          ))}
+        </div>
+        <span className="text-[11px] text-cave-500">
+          {error ? "" : `${commands.length} command${commands.length === 1 ? "" : "s"}`}
+        </span>
+      </div>
+      {view === "json" ? (
+        <>
+          <JsonEditor value={text} onChange={onChange} height={300} />
+          {error && !error.startsWith("Not valid JSON") ? (
+            <p className="text-[11px] text-rose-400">{error}</p>
+          ) : null}
+        </>
+      ) : error ? (
+        <div className="rounded-lg border border-rose-900/60 bg-rose-950/20 px-3 py-2 text-xs text-rose-200">
+          {error}{" "}
+          <button type="button" onClick={() => onView("json")} className="text-torch-400 hover:underline">
+            Edit the JSON
+          </button>
+        </div>
+      ) : commands.length === 0 ? (
+        <p className="text-xs text-cave-500">
+          No commands.{" "}
+          <button type="button" onClick={() => onView("json")} className="text-torch-400 hover:underline">
+            Add some in JSON
+          </button>
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {commands.map((c) => (
+            <CommandCard key={c.name} command={c} defaultOpen={commands.length === 1} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

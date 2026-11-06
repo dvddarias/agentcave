@@ -31,6 +31,7 @@ import type { InternalSettings } from "../settings.js";
 import { prepareAnswerSchema } from "./answer-schema.js";
 import { Budget, RunAbort, RunError } from "./budget.js";
 import { ParagraphChunker } from "./chunker.js";
+import { createHttpCommands, type StoredCommand } from "./http-commands.js";
 import { buildUserMessage, subagentToolName } from "./prompt.js";
 import { createSandbox } from "./sandbox.js";
 import { maybeTrim } from "./trim.js";
@@ -238,6 +239,16 @@ export class Runner {
     await models.ensureLoaded();
     const contextLength = models.get(cycle.model)?.contextLength || 128_000;
 
+    // HTTP commands run on the server: the agent's internet mode doesn't apply to them.
+    const customCommands = createHttpCommands(parseJson<StoredCommand[]>(cycle.commands, []), {
+      cycleId: cycle.id,
+      turn: turn.idx,
+      labels: parseJson<Record<string, string>>(cycle.labels, {}),
+      secret: settings.webhookSecret,
+      signal: ac.signal,
+      fetch: this.ctx.commandFetch,
+      onCall: (call) => emit({ type: "http.call", data: { step: state.steps, ...call } }),
+    });
     const sandbox = await createSandbox({
       workspaceDir: c.workspace,
       agentFilesDir,
@@ -247,6 +258,7 @@ export class Runner {
       commandTimeoutMs: settings.commandTimeoutSec * 1000,
       outputCapBytes: settings.toolOutputCapBytes,
       signal: ac.signal,
+      customCommands,
     });
 
     const answerSchema = prepareAnswerSchema(parseJson(cycle.output_schema, null));
@@ -308,7 +320,7 @@ export class Runner {
     const saved = c.resume ? parseJson<ModelMessage[]>(turn.messages, []) : [];
     const turnMessages: ModelMessage[] = saved.length
       ? saved
-      : [{ role: "user", content: buildUserMessage(turn.prompt, c.inputManifest) }];
+      : [{ role: "user", content: buildUserMessage(turn.prompt, c.inputManifest, turn.notice) }];
     if (c.resume) turnMessages.push({ role: "user", content: c.resume.message });
     cycles.saveMessages(turn.id, turnMessages, state.nudges);
 

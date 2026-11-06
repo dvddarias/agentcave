@@ -195,7 +195,112 @@ function isFromAgentCave(rawBody: string, header: string | undefined, secret: st
 }`}
         />
       </Step>
-      <Step n={7} title="TypeScript client">
+      <Step n={7} title="HTTP commands: let the agent reach your own systems">
+        <p className="text-sm text-cave-400">
+          Give a cycle <code className="font-mono">commands</code> and each one becomes a real command in the
+          sandbox, like <code className="font-mono">get_order_status --orderId A1</code>. AgentCave runs it on
+          the server: it checks the flags against <code className="font-mono">inputSchema</code>, then POSTs{" "}
+          <code className="font-mono">{"{ command, input, cycleId, turn, callId, labels }"}</code> to your{" "}
+          <code className="font-mono">url</code> with your <code className="font-mono">headers</code>. The
+          response body is the command's stdout. The headers are secret: the model never sees them and the API
+          only shows them masked. Because they are commands, the agent can use pipes, loops,{" "}
+          <code className="font-mono">jq</code> and files, so big responses stay out of its context.
+        </p>
+        <CodeBlock
+          lang="bash"
+          code={`curl -X POST ${base}/cycles \\
+  -H 'content-type: application/json' \\
+  -d '{
+    "agent": "support-agent",
+    "prompt": "Where are orders A1 and B2?",
+    "commands": [{
+      "name": "get_order_status",
+      "description": "Get the current status of an order by its id. Prints JSON: { status, items[], updatedAt }.",
+      "inputSchema": {
+        "type": "object",
+        "properties": { "orderId": { "type": "string", "description": "The order id, e.g. A1" } },
+        "required": ["orderId"]
+      },
+      "url": "https://shop.example.com/agent-tools/order-status",
+      "headers": { "Authorization": "Bearer <short-lived token>" },
+      "timeoutSec": 20
+    }]
+  }'`}
+        />
+        <p className="text-sm text-cave-400">What the agent can then do inside the sandbox:</p>
+        <CodeBlock
+          lang="bash"
+          code={`get_order_status --help                       # flags, an example, exit codes
+for id in A1 B2 C3; do get_order_status --orderId "$id"; done | jq -r '.status'
+get_order_status --orderId A1 > /tmp/a1.json && jq '.items | length' /tmp/a1.json
+echo '{"orderId":"A1"}' | get_order_status --json -`}
+        />
+        <ul className="list-disc space-y-1 pl-5 text-sm text-cave-400">
+          <li>
+            Flags follow the schema's top-level properties: numbers and booleans are converted (
+            <code className="font-mono">--flag</code>, <code className="font-mono">--no-flag</code>), arrays
+            repeat the flag, and objects go through <code className="font-mono">--json</code>.
+          </li>
+          <li>
+            Exit codes: <code className="font-mono">0</code> success (2xx),{" "}
+            <code className="font-mono">1</code> the call failed (any other status, timeout, network error;
+            the reason and the first 2 KB of the body are on stderr), <code className="font-mono">2</code> bad
+            arguments (nothing was sent). Redirects are not followed, and responses over 10 MB fail.
+          </li>
+          <li>
+            The server makes the call, so the agent's internet mode doesn't matter, and any URL works,{" "}
+            <strong className="text-cave-300">internal addresses included</strong>: the caller chooses it,
+            like a <code className="font-mono">webhookUrl</code>.
+          </li>
+          <li>
+            <code className="font-mono">timeoutSec</code> (default 20, max 120) is per call. A whole bash
+            command line also has the sandbox's command time limit (Settings, default 60 s), shared by every
+            call in it: a loop of many calls must finish within it, or the line is cut (exit 124) and its
+            output is lost. Files written before that are kept.
+          </li>
+          <li>
+            The commands stay for follow-ups, <code className="font-mono">continue</code> and restarts. A
+            follow-up or re-run with <code className="font-mono">commands</code> replaces them (e.g. a fresh
+            token); <code className="font-mono">[]</code> removes them.
+          </li>
+          <li>
+            Every call is also an <code className="font-mono">http.call</code> event (input, status, time and
+            the first 2 KB of the response, never the headers).
+          </li>
+        </ul>
+        <p className="text-sm text-cave-400">
+          A small receiver (Node) that only trusts signed calls (Settings → webhook signing secret):
+        </p>
+        <CodeBlock
+          lang="typescript"
+          code={`import { createHmac, timingSafeEqual } from "node:crypto";
+import { createServer } from "node:http";
+
+const SECRET = process.env.AGENTCAVE_SECRET!; // the signing secret from Settings
+const TOKEN = process.env.AGENT_TOOLS_TOKEN!; // what you put in the command's "headers"
+
+createServer(async (req, res) => {
+  let raw = "";
+  for await (const chunk of req) raw += chunk;
+  const expected = "sha256=" + createHmac("sha256", SECRET).update(raw).digest("hex");
+  const sig = String(req.headers["x-agentcave-signature"] ?? "");
+  const signed = sig.length === expected.length && timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
+  if (!signed || req.headers.authorization !== \`Bearer \${TOKEN}\`) {
+    res.writeHead(401).end("not allowed");
+    return;
+  }
+  const { command, input } = JSON.parse(raw); // also: cycleId, turn, callId, labels
+  if (command === "get_order_status") {
+    const order = await findOrder(input.orderId); // your code
+    res.writeHead(order ? 200 : 404, { "content-type": "application/json" });
+    res.end(JSON.stringify(order ?? { error: \`no order \${input.orderId}\` }));
+    return;
+  }
+  res.writeHead(404).end(\`unknown command \${command}\`);
+}).listen(8080);`}
+        />
+      </Step>
+      <Step n={8} title="TypeScript client">
         <p className="text-sm text-cave-400">
           The repository ships <code className="font-mono">@agentcave/client</code>: zero dependencies, works
           in Node 20+ and browsers.

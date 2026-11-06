@@ -8,6 +8,13 @@ export interface SubagentInfo {
   description: string;
 }
 
+export interface CommandInfo {
+  name: string;
+  description: string;
+  /** One-line usage, e.g. `get_order_status --orderId <string>`. */
+  usage: string;
+}
+
 export interface PromptOptions {
   agentPrompt: string;
   internet: AgentInternet;
@@ -15,6 +22,8 @@ export interface PromptOptions {
   python: boolean;
   agentFiles: string[];
   subagents: SubagentInfo[];
+  /** HTTP commands of the cycle. */
+  commands: CommandInfo[];
   outputSchema: JsonSchema | null;
   isSubagent: boolean;
 }
@@ -58,6 +67,23 @@ export function buildSystemPrompt(o: PromptOptions): string {
     "- Very long command output is shortened. When that happens, the full output is saved under `/tmp/agentcave/` so you can `grep` or `sed -n` through it.",
   );
 
+  if (o.commands.length > 0) {
+    lines.push(
+      "",
+      "## Commands for this task",
+      "",
+      "These commands reach the user's own systems for you (no internet access needed):",
+      "",
+    );
+    for (const c of o.commands) {
+      lines.push(`- \`${c.usage}\`: ${c.description.trim().replace(/\s*\n\s*/g, " ")}`);
+    }
+    lines.push(
+      "",
+      "Run `<name> --help` for a command's flags and an example. A command prints the endpoint's response on stdout. Exit code 1 means the call failed (the reason is on stderr); exit code 2 means the arguments were wrong and nothing was sent. They work with pipes, loops and redirects like any other command (`… | jq`, `for … do … done`, `> file`). A whole command line, loop included, has one time limit, so for many calls save each result to a file as you go.",
+    );
+  }
+
   if (o.subagents.length > 0) {
     lines.push(
       "",
@@ -99,13 +125,14 @@ function formatSize(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-/** The user message for a turn: the prompt plus a list of the files it brought. */
-export function buildUserMessage(prompt: string, files: Manifest): string {
+/** The user message for a turn: the prompt, an AgentCave notice (if any) and a list of the files it brought. */
+export function buildUserMessage(prompt: string, files: Manifest, notice?: string | null): string {
+  const text = notice ? `${prompt}\n\n---\n${notice}` : prompt;
   const paths = Object.keys(files).sort();
-  if (paths.length === 0) return prompt;
+  if (paths.length === 0) return text;
   const shown = paths.slice(0, 200).map((p) => `- /workspace/${p} (${formatSize(files[p].size)})`);
   const more = paths.length > 200 ? `\n- … and ${paths.length - 200} more` : "";
-  return `${prompt}\n\n---\nFiles provided in /workspace (${paths.length}):\n${shown.join("\n")}${more}`;
+  return `${text}\n\n---\nFiles provided in /workspace (${paths.length}):\n${shown.join("\n")}${more}`;
 }
 
 function joinWords(items: string[]): string {

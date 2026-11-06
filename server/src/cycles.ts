@@ -16,10 +16,11 @@ import type { ModelMessage } from "ai";
 import { Zip, ZipDeflate } from "fflate";
 import type { Manifest } from "./blobs.js";
 import type { Ctx } from "./context.js";
-import { newCycleParams, storeFiles } from "./cycle-factory.js";
-import { FINAL, limitUsage } from "./cycle-store.js";
+import { cycleSystemPrompt, newCycleParams, storeFiles } from "./cycle-factory.js";
+import { type CycleStore, FINAL, limitUsage } from "./cycle-store.js";
 import { parseJson } from "./db.js";
 import { CONTINUABLE, limitsForContinue, roomLeft } from "./engine/budget.js";
+import { checkCommands, commandsChangeNotice, type StoredCommand } from "./engine/http-commands.js";
 import { buildContinueMessage } from "./engine/prompt.js";
 import type { Runner } from "./engine/runner.js";
 import type { Scheduler } from "./engine/scheduler.js";
@@ -89,8 +90,22 @@ export class CycleService {
       throw conflict(`The cycle is ${row.status}; send the follow-up when it has finished`, "cycle_busy");
     }
     this.requireToken();
+    // New commands: the system prompt lists them from this turn on, and the turn's message says what changed.
+    let commands: Parameters<CycleStore["addTurn"]>[3];
+    if (req.commands !== undefined) {
+      const next = await checkCommands(req.commands);
+      commands = {
+        commands: next,
+        systemPrompt: cycleSystemPrompt(this.ctx, this.ctx.agents.getVersionById(row.agent_version_id), {
+          outputSchema: parseJson<JsonSchema | null>(row.output_schema, null),
+          commands: next,
+          isSubagent: false,
+        }),
+        notice: commandsChangeNotice(parseJson<StoredCommand[]>(row.commands, []), next),
+      };
+    }
     const manifest = await storeFiles(this.ctx, req.files);
-    this.ctx.cycles.addTurn(id, req.prompt, manifest);
+    this.ctx.cycles.addTurn(id, req.prompt, manifest, commands);
     this.scheduler.tick();
     return this.ctx.cycles.get(id);
   }
@@ -152,6 +167,7 @@ export class CycleService {
             : undefined,
       labels: req.labels ?? parseJson<Record<string, string>>(row.labels, {}),
       webhookUrl: req.webhookUrl !== undefined ? req.webhookUrl : row.webhook_url,
+      commands: req.commands ?? parseJson<StoredCommand[]>(row.commands, []),
       source: "rerun",
       rerunOf: id,
     });

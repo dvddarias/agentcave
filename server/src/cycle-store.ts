@@ -16,6 +16,7 @@ import type {
 import type { ModelMessage } from "ai";
 import type { Manifest } from "./blobs.js";
 import { all, type DB, nowIso, one, type Param, parseJson, run, tx } from "./db.js";
+import { maskCommands, type StoredCommand } from "./engine/http-commands.js";
 import { badRequest, notFound } from "./errors.js";
 import type { EventHub } from "./events.js";
 import { newId } from "./ids.js";
@@ -39,6 +40,8 @@ export interface CycleRow {
   output_schema: string | null;
   labels: string;
   webhook_url: string | null;
+  /** JSON `StoredCommand[]`, headers included: never return it as is. */
+  commands: string;
   system_prompt: string;
   turn: number;
   error_code: string | null;
@@ -97,6 +100,8 @@ export interface TurnRow {
   last_step: number;
   /** JSON `Resume` while a continue request waits to run. */
   resume: string | null;
+  /** A line AgentCave adds to the turn's user message (e.g. which commands a follow-up changed). */
+  notice: string | null;
 }
 
 /** A continue request waiting for the runner. */
@@ -135,6 +140,7 @@ export interface CreateCycleParams {
   outputSchema: JsonSchema | null;
   labels: Record<string, string>;
   webhookUrl: string | null;
+  commands: StoredCommand[];
   systemPrompt: string;
   prompt: string;
   inputManifest: Manifest;
@@ -360,9 +366,9 @@ export class CycleStore {
       run(
         this.db,
         `INSERT INTO cycles (id, agent_id, agent_version_id, agent_slug, agent_name, agent_version, parent_id, root_id, depth,
-          source, rerun_of, status, model, reasoning, limits, output_schema, labels, webhook_url, system_prompt, turn,
-          created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
+          source, rerun_of, status, model, reasoning, limits, output_schema, labels, webhook_url, commands, system_prompt,
+          turn, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
         id,
         p.agentId,
         p.agentVersionId,
@@ -381,6 +387,7 @@ export class CycleStore {
         p.outputSchema ? JSON.stringify(p.outputSchema) : null,
         JSON.stringify(p.labels),
         p.webhookUrl,
+        JSON.stringify(p.commands),
         p.systemPrompt,
         now,
         now,
@@ -412,25 +419,44 @@ export class CycleStore {
     prompt: string,
     manifest: Manifest,
     status: CycleStatus,
+    notice: string | null = null,
   ): void {
     run(
       this.db,
-      "INSERT INTO turns (id, cycle_id, idx, prompt, input_manifest, status) VALUES (?, ?, ?, ?, ?, ?)",
+      "INSERT INTO turns (id, cycle_id, idx, prompt, input_manifest, status, notice) VALUES (?, ?, ?, ?, ?, ?, ?)",
       newId("trn"),
       cycleId,
       idx,
       prompt,
       JSON.stringify(manifest),
       status,
+      notice,
     );
   }
 
-  /** Adds a follow-up turn and puts the cycle back in the queue. */
-  addTurn(cycleId: string, prompt: string, manifest: Manifest): CycleRow {
+  /**
+   * Adds a follow-up turn and puts the cycle back in the queue. `commands` replaces the cycle's
+   * HTTP commands, with the system prompt rebuilt for them and a notice for the turn's message.
+   */
+  addTurn(
+    cycleId: string,
+    prompt: string,
+    manifest: Manifest,
+    commands?: { commands: StoredCommand[]; systemPrompt: string; notice: string | null },
+  ): CycleRow {
     const row = this.getRow(cycleId);
     const idx = row.turn + 1;
     tx(this.db, () => {
-      this.insertTurn(cycleId, idx, prompt, manifest, "queued");
+      this.insertTurn(cycleId, idx, prompt, manifest, "queued", commands?.notice ?? null);
+      if (commands) {
+        run(
+          this.db,
+          "UPDATE cycles SET commands = ?, system_prompt = ? WHERE id = ?",
+          JSON.stringify(commands.commands),
+          commands.systemPrompt,
+          cycleId,
+        );
+      }
       run(
         this.db,
         `UPDATE cycles SET turn = ?, status = 'queued', error_code = NULL, error_message = NULL, activity = NULL,
@@ -689,6 +715,7 @@ export class CycleStore {
       outputSchema: parseJson<JsonSchema | null>(r.output_schema, null),
       labels: parseJson<Record<string, string>>(r.labels, {}),
       webhookUrl: r.webhook_url,
+      commands: maskCommands(parseJson<StoredCommand[]>(r.commands, [])),
       source: r.source,
       parentId: r.parent_id,
       rootId: r.root_id,

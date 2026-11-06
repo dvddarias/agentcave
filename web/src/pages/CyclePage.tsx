@@ -290,7 +290,7 @@ function CycleView({ id }: { id: string }) {
                   onSelect={setSelectedFile}
                 />
               ) : tab === "details" ? (
-                <DetailsPanel cycle={cycle} refreshKey={refreshKey} />
+                <DetailsPanel cycle={cycle} refreshKey={refreshKey} events={events} />
               ) : (
                 <RawPanel events={events} />
               )}

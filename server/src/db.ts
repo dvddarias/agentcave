@@ -177,6 +177,12 @@ const MIGRATIONS: string[] = [
       created_at)
     SELECT id, agent_id, agent_slug, agent_name, model, input_tokens, output_tokens, cost_usd, created_at FROM cycles;
   `,
+  // 4 — HTTP commands: the cycle's current commands (JSON, headers included: they are secret and never leave
+  // the server), and a line added to a turn's user message (e.g. which commands a follow-up added or removed).
+  `
+  ALTER TABLE cycles ADD COLUMN commands TEXT NOT NULL DEFAULT '[]';
+  ALTER TABLE turns ADD COLUMN notice TEXT;
+  `,
 ];
 
 export function openDb(file: string): DB {

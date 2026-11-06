@@ -18,7 +18,7 @@ import { SettingsService } from "./settings.js";
 import { WebhookService } from "./webhooks.js";
 
 /** Set by the Docker build (git tag, or `main-<sha>`); falls back to the package version in development. */
-export const VERSION = process.env.AGENTCAVE_VERSION || "0.2.4-dev";
+export const VERSION = process.env.AGENTCAVE_VERSION || "0.3.0-dev";
 
 export interface AgentCaveOptions {
   dataDir: string;
@@ -28,6 +28,8 @@ export interface AgentCaveOptions {
   basePath?: string;
   modelFactory?: ModelFactory & { requiresToken?: boolean };
   fetchImpl?: typeof fetch;
+  /** Used by HTTP commands (default: the global fetch). */
+  commandFetchImpl?: typeof fetch;
   webhookBackoffMs?: number[];
 }
 
@@ -56,6 +58,7 @@ export async function createAgentCave(opts: AgentCaveOptions) {
     webhooks: new WebhookService(db, settings, fetchImpl, opts.webhookBackoffMs),
     modelFactory: opts.modelFactory ?? openRouterModelFactory,
     registry: new RunRegistry(),
+    commandFetch: opts.commandFetchImpl ?? ((...args) => fetch(...args)),
   };
 
   const runner = new Runner(ctx);

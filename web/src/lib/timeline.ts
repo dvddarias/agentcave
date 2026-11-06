@@ -17,6 +17,9 @@ export interface ToolResult {
   ms: number;
 }
 
+/** One call of an HTTP command (the `http.call` event). */
+export type HttpCall = Extract<CycleEvent, { type: "http.call" }>["data"];
+
 export interface SubagentRef {
   childId: string;
   agent: string;
@@ -58,6 +61,8 @@ export type TimelineItem =
       /** The run ended (limit, stop, restart) before the tool returned. */
       interrupted?: boolean;
       subagent?: SubagentRef;
+      /** Calls the HTTP commands of this bash command line made. */
+      httpCalls?: HttpCall[];
       ts: string;
     }
   | { kind: "nudge"; key: string; count: number; message: string; ts: string }
@@ -199,6 +204,14 @@ export function buildTimeline(events: CycleEvent[]): Timeline {
         };
         if (at !== undefined)
           items[at] = { ...(items[at] as Extract<TimelineItem, { kind: "tool" }>), result };
+        break;
+      }
+      case "http.call": {
+        const at = e.data.toolCallId ? index.get(`tool:${scope}:${e.data.toolCallId}`) : undefined;
+        if (at !== undefined) {
+          const it = items[at] as Extract<TimelineItem, { kind: "tool" }>;
+          items[at] = { ...it, httpCalls: [...(it.httpCalls ?? []), e.data] };
+        }
         break;
       }
       case "subagent.start": {

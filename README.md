@@ -43,7 +43,7 @@ npm install
 npm run demo        # → http://localhost:7420
 ```
 
-Demo mode uses a scripted fake model ($0). It creates two sample agents (a code reviewer that delegates to a test writer) and starts a cycle, so you can watch the streaming UI right away.
+Demo mode uses a scripted fake model ($0). It creates three sample agents (a code reviewer that delegates to a test writer, and a support agent that looks up orders with an [HTTP command](#http-commands)) and starts two cycles, so you can watch the streaming UI right away.
 
 ---
 
@@ -70,6 +70,34 @@ Demo mode uses a scripted fake model ($0). It creates two sample agents (a code 
 
 **Restarts.** If the container stops while cycles are running, they restart from the beginning of the interrupted turn on the next boot (the workspace is restored from a snapshot).
 
+### HTTP commands
+
+A caller can give a cycle **commands that reach its own systems** (order status, stock, a calendar…) without opening the sandbox to the internet or putting a token where the model can read it. Each command becomes a real command in the sandbox:
+
+```json
+"commands": [{
+  "name": "get_order_status",
+  "description": "Get the current status of an order by its id. Prints JSON: { status, items[], updatedAt }.",
+  "inputSchema": { "type": "object", "properties": { "orderId": { "type": "string" } }, "required": ["orderId"] },
+  "url": "https://shop.example.com/agent-tools/order-status",
+  "headers": { "Authorization": "Bearer <short-lived token>" },
+  "timeoutSec": 20
+}]
+```
+
+```bash
+for id in A1 B2 C3; do get_order_status --orderId "$id"; done | jq -r '.status'
+get_order_status --orderId A1 > /tmp/a1.json && jq '.items | length' /tmp/a1.json
+```
+
+- The command runs **in the AgentCave server**, not the sandbox. It turns the flags into JSON (one flag per top-level property; `--no-flag`, repeated flags for arrays, `--json` for the rest), checks it against `inputSchema`, and POSTs `{ command, input, cycleId, turn, callId, labels }` to `url` with the `headers` (plus `X-AgentCave-Signature` when a signing secret is set). Being commands, they work with pipes, loops, `jq` and files, so big responses stay out of the model's context.
+- **Exit codes:** 0 with the 2xx body on stdout; 1 for any other status, a timeout or a network error (reason on stderr); 2 for bad arguments (nothing sent). `<name> --help` shows the flags and an example. Redirects are not followed; responses over 10 MB fail.
+- **Headers are secret:** stored on the cycle for restarts, never shown to the model, the sandbox, events or webhooks; the API and UI show them masked (`Authorization: ••••`).
+- The **server makes the call**, so the agent's internet mode doesn't apply, and it calls whatever URL the caller gives, **internal addresses included** (the caller's choice, like `webhookUrl`).
+- **Time:** `timeoutSec` (default 20, max 120) is per call, but a whole bash command line shares the sandbox's command time limit (Settings, default 60 s). A loop of many calls must fit in it, or the line is cut (exit 124) and its output is lost; files already written stay.
+- Up to 32 commands; names are unique and can't be a sandbox command (`ls`, `curl`, `jq`…) or shell builtin (400 otherwise). They stay for follow-ups, `continue` and restarts; a follow-up or re-run with `commands` replaces them (the agent is told what changed).
+- Each call is an `http.call` event (input, status, time, first 2 KB of the response), shown as a chip on its bash card; the Details tab lists the commands and every call.
+
 ---
 
 ## API
@@ -78,13 +106,13 @@ Base URL `http://<host>:7420/api/v1` (with `BASE_PATH`: `…/<prefix>/api/v1`). 
 
 | | |
 |---|---|
-| `POST /cycles` | start: `{ agent, prompt, files?, overrides?, outputSchema?, labels?, webhookUrl? }` |
+| `POST /cycles` | start: `{ agent, prompt, files?, overrides?, outputSchema?, labels?, webhookUrl?, commands? }` |
 | `GET /cycles/:id` | poll: status, progress, usage, answer, error |
 | `GET /cycles/:id/events` | live SSE (or `?format=json`) |
 | `POST /cycles/:id/stop` | stop (sub-agents too) |
-| `POST /cycles/:id/messages` | follow-up `{ prompt, files? }` |
+| `POST /cycles/:id/messages` | follow-up `{ prompt, files?, commands? }` |
 | `POST /cycles/:id/continue` | after a limit: run the same turn on with more room `{ limits?, extendPercent?, message? }` (empty body = +50%) |
-| `POST /cycles/:id/rerun` | same input as a new cycle, optional overrides |
+| `POST /cycles/:id/rerun` | same input as a new cycle, optional overrides and `commands` |
 | `GET /cycles/:id/files[/path]`, `/files.zip` | workspace files (`?changed=true`) |
 | `GET /cycles?agent=&status=&label.k=v` | list |
 | `/agents…` | create, update (new version), versions, restore, export/import `.md`/`.zip` |
@@ -96,7 +124,7 @@ Base URL `http://<host>:7420/api/v1` (with `BASE_PATH`: `…/<prefix>/api/v1`). 
 
 ```bash
 # a fixed version (recommended: it never changes under you)
-npm install https://github.com/dvddarias/agentcave/releases/download/v0.2.4/agentcave-client-0.2.4.tgz
+npm install https://github.com/dvddarias/agentcave/releases/download/v0.3.0/agentcave-client-0.3.0.tgz
 # or the build of the latest push to main
 npm install https://github.com/dvddarias/agentcave/releases/download/client-latest/agentcave-client.tgz
 ```
@@ -148,7 +176,7 @@ example.com {
 ```yaml
 services:
   agentcave:
-    image: ghcr.io/dvddarias/agentcave:0.2.4
+    image: ghcr.io/dvddarias/agentcave:0.3.0
     environment:
       BASE_PATH: /cave
 ```

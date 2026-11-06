@@ -54,4 +54,6 @@ export interface Ctx {
   webhooks: WebhookService;
   modelFactory: ModelFactory & { requiresToken?: boolean };
   registry: RunRegistry;
+  /** Used by HTTP commands to call the caller's URLs. */
+  commandFetch: typeof fetch;
 }

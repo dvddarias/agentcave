@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { COMMAND_TIMEOUT_SEC, MAX_COMMANDS } from "./engine/http-commands.js";
 
 export const reasoningSchema = z.enum(["off", "minimal", "low", "medium", "high", "xhigh"]);
 
@@ -62,6 +63,36 @@ const labelsSchema = z
   .record(z.string().min(1).max(100), z.string().max(500))
   .refine((l) => Object.keys(l).length <= 50, "At most 50 labels");
 
+export const httpCommandSchema = z.strictObject({
+  name: z
+    .string()
+    .regex(
+      /^[a-z][a-z0-9_-]{0,63}$/,
+      "Use lowercase letters, digits, _ and -, starting with a letter (max 64 chars)",
+    ),
+  description: z.string().trim().min(1).max(4000),
+  inputSchema: jsonSchemaSchema,
+  url: z.url({ protocol: /^https?$/ }),
+  headers: z
+    .record(
+      z
+        .string()
+        .max(200)
+        .regex(/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/, "Not a valid HTTP header name"),
+      z
+        .string()
+        .max(16_000)
+        .regex(/^[^\r\n\0]*$/, "Header values can't contain line breaks"),
+    )
+    .refine((h) => Object.keys(h).length <= 50, "At most 50 headers")
+    .optional(),
+  timeoutSec: z.number().positive().max(COMMAND_TIMEOUT_SEC.max).optional(),
+});
+
+const commandsSchema = z
+  .array(httpCommandSchema)
+  .max(MAX_COMMANDS, `At most ${MAX_COMMANDS} commands per cycle`);
+
 export const startCycleSchema = z.strictObject({
   agent: slugSchema,
   agentVersion: z.number().int().positive().optional(),
@@ -71,12 +102,14 @@ export const startCycleSchema = z.strictObject({
   outputSchema: jsonSchemaSchema.nullable().optional(),
   labels: labelsSchema.optional(),
   webhookUrl: z.url({ protocol: /^https?$/ }).optional(),
+  commands: commandsSchema.optional(),
   source: z.enum(["api", "ui"]).optional(),
 });
 
 export const followUpSchema = z.strictObject({
   prompt: z.string().min(1).max(2_000_000),
   files: z.array(fileInputSchema).max(10_000).optional(),
+  commands: commandsSchema.optional(),
 });
 
 export const continueSchema = z.strictObject({
@@ -94,6 +127,7 @@ export const rerunSchema = z.strictObject({
     .url({ protocol: /^https?$/ })
     .nullable()
     .optional(),
+  commands: commandsSchema.optional(),
 });
 
 export const settingsUpdateSchema = z.strictObject({
