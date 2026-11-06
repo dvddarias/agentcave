@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
 import { api, keys } from "../../lib/api";
 import { formatBytes, formatCost, formatDate, formatDuration, formatTokens } from "../../lib/format";
+import { useReadOnly } from "../../lib/session";
 import type { HttpCall } from "../../lib/timeline";
 import { CommandCard } from "../CommandCard";
 import { IconDownload, IconExternal, IconFile, IconX } from "../icons";
@@ -269,6 +270,7 @@ export function DetailsPanel({
   refreshKey: string;
   events: CycleEvent[];
 }) {
+  const readOnly = useReadOnly();
   const httpCalls = useMemo(
     () => events.flatMap((e) => (e.type === "http.call" ? [{ call: e.data, turn: e.turn, seq: e.seq }] : [])),
     [events],
@@ -295,9 +297,13 @@ export function DetailsPanel({
           <span className="font-mono">{cycle.id}</span> <CopyButton text={cycle.id} />
         </Row>
         <Row k="Agent">
-          <Link className="text-torch-400 hover:underline" to={`/agents/${cycle.agent.slug}`}>
-            {cycle.agent.name}
-          </Link>{" "}
+          {readOnly ? (
+            cycle.agent.name
+          ) : (
+            <Link className="text-torch-400 hover:underline" to={`/agents/${cycle.agent.slug}`}>
+              {cycle.agent.name}
+            </Link>
+          )}{" "}
           <span className="text-cave-500">v{cycle.agent.version}</span>
         </Row>
         <Row k="Model">

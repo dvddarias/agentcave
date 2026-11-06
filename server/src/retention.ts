@@ -8,10 +8,11 @@ import { log } from "./log.js";
 /** Deletes a cycle with all its sub-agent cycles, events, turns and workspaces. */
 export async function deleteCycleTree(ctx: Ctx, cycleId: string): Promise<void> {
   const ids = [cycleId, ...ctx.cycles.descendantIds(cycleId)];
+  const rootLabels = ctx.cycles.rootLabels(cycleId);
   run(ctx.db, "DELETE FROM cycles WHERE id = ?", cycleId); // cascades to children, turns, events, deliveries
   for (const id of ids) {
     await fs.rm(path.join(ctx.dataDir, "cycles", id), { recursive: true, force: true }).catch(() => {});
-    ctx.events.touch(id, true);
+    ctx.events.touch(id, { rootLabels });
   }
 }
 

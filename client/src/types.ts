@@ -217,8 +217,22 @@ export interface Health {
   ok: boolean;
   version: string;
   uptimeSec: number;
+  /** In a scoped view, `running` and `queued` count only the scope's cycles. */
   queue: { running: number; queued: number; maxParallel: number };
   tokenSet: boolean;
+}
+
+/**
+ * What this request may see (`GET /session`). A trusted proxy in front of AgentCave sets the view
+ * scope with the `X-AgentCave-Scope` header: `key=value` label pairs separated by `;` (or `,`), e.g.
+ * `userId=5; app=checkincopilot`, percent-encoded where a key or value has `;`, `,`, `=` or `%`.
+ * A scoped request sees only cycles whose root cycle's labels include every pair (with their
+ * sub-agent cycles), and is read-only: writes and the agents, settings and models endpoints answer
+ * 403, and other cycles answer 404.
+ */
+export interface Session {
+  /** The view scope, or null for full access. */
+  scope: Record<string, string> | null;
 }
 
 // ---------------------------------------------------------------------------

@@ -189,6 +189,13 @@ const MIGRATIONS: string[] = [
   ALTER TABLE cycles ADD COLUMN vision INTEGER NOT NULL DEFAULT 0;
   ALTER TABLE turns ADD COLUMN images TEXT NOT NULL DEFAULT '[]';
   `,
+  // 6 — view scopes: usage rows keep the labels of the cycle's root (sub-agents have none of their own),
+  // so scoped usage totals still count cycles that were deleted. Rows of cycles already deleted stay '{}'.
+  `
+  ALTER TABLE cycle_usage ADD COLUMN root_labels TEXT NOT NULL DEFAULT '{}';
+  UPDATE cycle_usage SET root_labels = COALESCE((SELECT r.labels FROM cycles c JOIN cycles r ON r.id = c.root_id
+    WHERE c.id = cycle_usage.cycle_id), '{}');
+  `,
 ];
 
 export function openDb(file: string): DB {

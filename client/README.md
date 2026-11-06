@@ -8,7 +8,7 @@ Straight from the GitHub Releases:
 
 ```bash
 # a fixed version (recommended)
-npm install https://github.com/dvddarias/agentcave/releases/download/v0.4.1/agentcave-client-0.4.1.tgz
+npm install https://github.com/dvddarias/agentcave/releases/download/v0.5.0/agentcave-client-0.5.0.tgz
 # or the build of the latest push to main (re-run this command to update)
 npm install https://github.com/dvddarias/agentcave/releases/download/client-latest/agentcave-client.tgz
 ```
@@ -82,6 +82,14 @@ const shot = await cave.cycles.start({
 await cave.cycles.wait(shot.id);
 const [turn] = await cave.cycles.turns(shot.id);
 for (const img of turn.images) console.log(img.path, img.source, cave.cycles.imageUrl(shot.id, img.sha256));
+```
+
+A read-only view of one user's cycles (what a proxy gives a viewer with `X-AgentCave-Scope`; see the main README):
+
+```ts
+const view = new AgentCave({ baseUrl: "http://localhost:7420", headers: { "X-AgentCave-Scope": "userId=5" } });
+await view.session(); // { scope: { userId: "5" } }
+const { cycles } = await view.cycles.list(); // only cycles labelled userId=5; writes throw a 403
 ```
 
 Errors are thrown as `AgentCaveError` with `status`, `code` and `message`.

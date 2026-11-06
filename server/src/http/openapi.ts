@@ -416,6 +416,19 @@ export const ROUTES: RouteDoc[] = [
     returns: "{ deletedCycles, deletedBlobs }",
   },
   { method: "get", path: "/health", tag: "System", summary: "Health and queue size", returns: "Health" },
+  {
+    method: "get",
+    path: "/session",
+    tag: "System",
+    summary: "The view scope of this request",
+    description: [
+      "`scope` is the label pairs from the `X-AgentCave-Scope` header, or null for full access.",
+      "A trusted proxy in front of AgentCave sets that header to give a viewer a read-only view of their own cycles: `key=value` pairs separated by `;` (or `,`), e.g. `userId=5; app=checkincopilot`, percent-encoded where a key or value has `;`, `,`, `=` or `%`. Such a request sees only cycles whose root cycle's labels include every pair, with their sub-agent cycles: in lists, details, turns, events, files, images, the global feed, usage stats and the queue counts of `/health`. Other cycles answer 404. Every write, and every agents, settings, models, maintenance and OpenAPI endpoint, answers 403. A header that names no usable pair answers 400 `invalid_scope`.",
+      "AgentCave trusts the header as it is: the proxy must always overwrite it, or strip it for full access.",
+    ].join("\n\n"),
+    returns: "Session",
+    example: { scope: { userId: "5", app: "checkincopilot" } },
+  },
 ];
 
 function jsonSchemaOf(schema: z.ZodType): Record<string, unknown> {
@@ -474,7 +487,7 @@ export function buildOpenApi(version: string, basePath = ""): Record<string, unk
       title: "AgentCave API",
       version,
       description:
-        "Start agentic cycles, poll or stream them, stop them, send follow-ups and download results. No authentication is built in: put your own proxy in front.",
+        "Start agentic cycles, poll or stream them, stop them, send follow-ups and download results. No authentication is built in: put your own proxy in front. The proxy can give a viewer a read-only view of their own cycles with the `X-AgentCave-Scope` header (see `GET /session`).",
     },
     servers: [{ url: `${basePath}/api/v1` }],
     paths,

@@ -320,6 +320,34 @@ console.log(done.answer, done.files);
 const zip = await cave.cycles.downloadZip(id, { changedOnly: true });`}
         />
       </Step>
+      <Step n={9} title="Read-only views of each user's own cycles">
+        <p className="text-sm text-cave-400">
+          Your proxy can show this UI to your own users, each seeing only their cycles. It sets{" "}
+          <code className="font-mono">X-AgentCave-Scope</code> to label pairs (
+          <code className="font-mono">userId=5; app=myapp</code>, percent-encoded where needed). That request
+          then sees only cycles whose labels include every pair, with their sub-agents: lists, details,
+          events, files, the live feed and usage. Other cycles answer 404, writes and the agents, settings and
+          models endpoints answer 403, and the UI shows only Cycles and Usage.{" "}
+          <code className="font-mono">GET /session</code> returns the scope. AgentCave trusts the header, so
+          the proxy must always overwrite it, or strip it for full access:
+        </p>
+        <CodeBlock
+          lang="typescript"
+          code={`import { createProxyMiddleware } from "http-proxy-middleware";
+
+app.use("/cave", createProxyMiddleware({
+  target: "http://agentcave:7420",
+  on: {
+    proxyReq: (proxyReq, req) => {
+      proxyReq.removeHeader("x-agentcave-scope"); // never pass on what the browser sent
+      if (!isAdmin(req.user)) {
+        proxyReq.setHeader("X-AgentCave-Scope", "userId=" + encodeURIComponent(req.user.id));
+      }
+    },
+  },
+}));`}
+        />
+      </Step>
     </div>
   );
 }

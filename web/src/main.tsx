@@ -5,6 +5,7 @@ import { createBrowserRouter, Navigate, type RouteObject, RouterProvider } from 
 import { Layout } from "./components/Layout";
 import { Spinner } from "./components/ui";
 import { basePath, queryClient } from "./lib/api";
+import { useReadOnly } from "./lib/session";
 import { AgentsPage } from "./pages/AgentsPage";
 import { CyclePage } from "./pages/CyclePage";
 import { CyclesPage } from "./pages/CyclesPage";
@@ -33,6 +34,11 @@ const load = (el: React.ReactNode) => (
   </Suspense>
 );
 
+/** Pages a scoped (read-only) view doesn't get: it lands on the cycles instead. */
+function FullAccess({ children }: { children: React.ReactNode }) {
+  return useReadOnly() ? <Navigate to="/cycles" replace /> : children;
+}
+
 const routes: RouteObject[] = [
   {
     element: <Layout />,
@@ -40,13 +46,20 @@ const routes: RouteObject[] = [
       { index: true, element: <Navigate to="/cycles" replace /> },
       { path: "cycles", element: <CyclesPage /> },
       { path: "cycles/:id", element: <CyclePage /> },
-      { path: "playground", element: load(<PlaygroundPage />) },
-      { path: "agents", element: <AgentsPage /> },
-      { path: "agents/new", element: load(<AgentEditorPage />) },
-      { path: "agents/:slug", element: load(<AgentEditorPage />) },
+      { path: "playground", element: <FullAccess>{load(<PlaygroundPage />)}</FullAccess> },
+      {
+        path: "agents",
+        element: (
+          <FullAccess>
+            <AgentsPage />
+          </FullAccess>
+        ),
+      },
+      { path: "agents/new", element: <FullAccess>{load(<AgentEditorPage />)}</FullAccess> },
+      { path: "agents/:slug", element: <FullAccess>{load(<AgentEditorPage />)}</FullAccess> },
       { path: "usage", element: load(<UsagePage />) },
-      { path: "docs", element: load(<DocsPage />) },
-      { path: "settings", element: load(<SettingsPage />) },
+      { path: "docs", element: <FullAccess>{load(<DocsPage />)}</FullAccess> },
+      { path: "settings", element: <FullAccess>{load(<SettingsPage />)}</FullAccess> },
       {
         path: "*",
         element: <div className="py-20 text-center text-cave-400">This page does not exist in the cave.</div>,

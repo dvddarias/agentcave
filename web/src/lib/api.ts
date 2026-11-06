@@ -40,6 +40,7 @@ export const keys = {
   models: ["models"] as const,
   settings: ["settings"] as const,
   health: ["health"] as const,
+  session: ["session"] as const,
   stats: (days: number) => ["stats", days] as const,
   openapi: ["openapi"] as const,
 };

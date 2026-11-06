@@ -2,16 +2,18 @@ import { useQuery } from "@tanstack/react-query";
 import { NavLink, Outlet, useLocation } from "react-router";
 import { api, keys } from "../lib/api";
 import { useCycleFeed } from "../lib/live";
+import { useSession } from "../lib/session";
 import { IconAgents, IconAlert, IconBook, IconChart, IconCycles, IconFlask, IconSettings } from "./icons";
-import { cx } from "./ui";
+import { cx, ErrorBox, Spinner } from "./ui";
 
+/** `full`: hidden in a scoped (read-only) view. */
 const NAV = [
   { to: "/cycles", label: "Cycles", icon: IconCycles },
-  { to: "/playground", label: "Playground", icon: IconFlask },
-  { to: "/agents", label: "Agents", icon: IconAgents },
+  { to: "/playground", label: "Playground", icon: IconFlask, full: true },
+  { to: "/agents", label: "Agents", icon: IconAgents, full: true },
   { to: "/usage", label: "Usage", icon: IconChart },
-  { to: "/docs", label: "API Docs", icon: IconBook },
-  { to: "/settings", label: "Settings", icon: IconSettings },
+  { to: "/docs", label: "API Docs", icon: IconBook, full: true },
+  { to: "/settings", label: "Settings", icon: IconSettings, full: true },
 ];
 
 export function Logo({ size = 28 }: { size?: number }) {
@@ -30,6 +32,8 @@ export function Logo({ size = 28 }: { size?: number }) {
 }
 
 export function Layout() {
+  const session = useSession();
+  const readOnly = !!session.data?.scope;
   const health = useQuery({ queryKey: keys.health, queryFn: () => api.health(), refetchInterval: 10_000 });
   const live = useCycleFeed();
   const location = useLocation();
@@ -48,7 +52,7 @@ export function Layout() {
           </div>
         </div>
         <nav className="flex gap-1 overflow-x-auto px-2 pb-2 md:flex-col md:pb-0">
-          {NAV.map(({ to, label, icon: Icon }) => (
+          {NAV.filter((n) => session.data && !(readOnly && n.full)).map(({ to, label, icon: Icon }) => (
             <NavLink
               key={to}
               to={to}
@@ -67,7 +71,16 @@ export function Layout() {
           ))}
         </nav>
         <div className="mt-auto hidden space-y-2 p-3 md:block">
-          {health.data && !health.data.tokenSet ? (
+          {readOnly ? (
+            <div
+              className="rounded-lg border border-cave-800 bg-cave-900/60 p-2.5 text-[11px] text-cave-400"
+              title={Object.entries(session.data?.scope ?? {})
+                .map(([k, v]) => `${k}=${v}`)
+                .join("; ")}
+            >
+              Read-only view of your cycles.
+            </div>
+          ) : health.data && !health.data.tokenSet ? (
             <NavLink
               to="/settings"
               className="flex items-start gap-2 rounded-lg border border-torch-700/50 bg-torch-500/10 p-2.5 text-xs text-torch-200 hover:bg-torch-500/15"
@@ -95,7 +108,18 @@ export function Layout() {
       </aside>
       <main className="min-w-0 flex-1 overflow-y-auto">
         <div className={cx(fullBleed ? "h-full" : "mx-auto max-w-7xl px-4 py-6 md:px-8 md:py-8")}>
-          <Outlet />
+          {/* Pages hide what a scoped view can't do, so they wait for the session. */}
+          {session.data ? (
+            <Outlet />
+          ) : session.error ? (
+            <div className="p-8">
+              <ErrorBox error={session.error} />
+            </div>
+          ) : (
+            <div className="flex justify-center py-16 text-cave-400">
+              <Spinner />
+            </div>
+          )}
         </div>
       </main>
     </div>

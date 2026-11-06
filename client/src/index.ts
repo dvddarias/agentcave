@@ -14,6 +14,7 @@ import type {
   Health,
   ModelList,
   RerunRequest,
+  Session,
   Settings,
   SettingsUpdate,
   StartCycleRequest,
@@ -286,6 +287,11 @@ export class AgentCave {
 
   health() {
     return this.request<Health>("GET", "/health");
+  }
+
+  /** The view scope this client's requests get (set by a proxy with `X-AgentCave-Scope`). */
+  session() {
+    return this.request<Session>("GET", "/session");
   }
 
   /** Global feed of cycle changes (used by dashboards). */

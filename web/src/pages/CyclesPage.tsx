@@ -7,6 +7,7 @@ import { Button, cx, Empty, ErrorBox, PageHeader, Pill, Spinner, StatusBadge } f
 import { api, keys } from "../lib/api";
 import { formatCost, formatDuration, formatTokens, timeAgo } from "../lib/format";
 import { useNow } from "../lib/live";
+import { useReadOnly } from "../lib/session";
 
 const STATUSES: (CycleStatus | "all")[] = ["all", "running", "queued", "completed", "failed", "stopped"];
 
@@ -17,6 +18,7 @@ export function CyclesPage() {
   const [q, setQ] = useState(params.get("q") ?? "");
   const [label, setLabel] = useState(params.get("label") ?? "");
   const navigate = useNavigate();
+  const readOnly = useReadOnly();
 
   const labels: Record<string, string> = {};
   const lm = /^([^=]+)=(.*)$/.exec(params.get("label") ?? "");
@@ -40,6 +42,7 @@ export function CyclesPage() {
   const agents = useQuery({
     queryKey: keys.agents(true),
     queryFn: () => api.agents.list({ archived: true }),
+    enabled: !readOnly,
   });
   const rows = cycles.data?.pages.flatMap((p) => p.cycles) ?? [];
   const anyRunning = rows.some((r) => r.status === "running");
@@ -56,15 +59,21 @@ export function CyclesPage() {
     <div>
       <PageHeader
         title="Cycles"
-        subtitle="Every agentic cycle started from the API or the Playground, live."
+        subtitle={
+          readOnly
+            ? "Your agent cycles, live."
+            : "Every agentic cycle started from the API or the Playground, live."
+        }
         actions={
           <>
             <Button variant="ghost" onClick={() => void cycles.refetch()}>
               <IconRefresh size={15} />
             </Button>
-            <Button variant="primary" onClick={() => navigate("/playground")}>
-              <IconPlus size={15} /> New cycle
-            </Button>
+            {readOnly ? null : (
+              <Button variant="primary" onClick={() => navigate("/playground")}>
+                <IconPlus size={15} /> New cycle
+              </Button>
+            )}
           </>
         }
       />
@@ -85,18 +94,20 @@ export function CyclesPage() {
             </button>
           ))}
         </div>
-        <select
-          value={agent}
-          onChange={(e) => set("agent", e.target.value)}
-          className="rounded-lg border border-cave-700 bg-cave-900 px-2.5 py-1.5 text-xs text-cave-200 focus:border-torch-600 focus:outline-none"
-        >
-          <option value="">All agents</option>
-          {agents.data?.map((a) => (
-            <option key={a.slug} value={a.slug}>
-              {a.config.name}
-            </option>
-          ))}
-        </select>
+        {readOnly ? null : (
+          <select
+            value={agent}
+            onChange={(e) => set("agent", e.target.value)}
+            className="rounded-lg border border-cave-700 bg-cave-900 px-2.5 py-1.5 text-xs text-cave-200 focus:border-torch-600 focus:outline-none"
+          >
+            <option value="">All agents</option>
+            {agents.data?.map((a) => (
+              <option key={a.slug} value={a.slug}>
+                {a.config.name}
+              </option>
+            ))}
+          </select>
+        )}
         <form
           className="relative"
           onSubmit={(e) => {
@@ -138,11 +149,15 @@ export function CyclesPage() {
         </div>
       ) : rows.length === 0 ? (
         <Empty icon={<IconCycles size={28} />} title="No cycles yet">
-          Start one from the{" "}
-          <Link to="/playground" className="text-torch-400 hover:underline">
-            Playground
-          </Link>{" "}
-          or with <code className="rounded bg-cave-800 px-1 font-mono text-xs">POST /api/v1/cycles</code>.
+          {readOnly ? null : (
+            <>
+              Start one from the{" "}
+              <Link to="/playground" className="text-torch-400 hover:underline">
+                Playground
+              </Link>{" "}
+              or with <code className="rounded bg-cave-800 px-1 font-mono text-xs">POST /api/v1/cycles</code>.
+            </>
+          )}
         </Empty>
       ) : (
         <div className="overflow-hidden rounded-xl border border-cave-750">

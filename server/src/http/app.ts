@@ -13,6 +13,7 @@ import { injectBasePath, normalizeBasePath, stripBasePath } from "./base-path.js
 import { agentRoutes } from "./routes-agents.js";
 import { cycleRoutes } from "./routes-cycles.js";
 import { systemRoutes } from "./routes-system.js";
+import { scopeGuard } from "./scope.js";
 import type { HttpDeps } from "./util.js";
 
 export function createHttpApp(deps: HttpDeps): Hono {
@@ -67,6 +68,8 @@ export function createHttpApp(deps: HttpDeps): Hono {
       log.debug(`${c.req.method} ${c.req.path} ${c.res.status} ${Date.now() - start}ms`);
     }
   });
+  // X-AgentCave-Scope: read-only, and only the cycles of the scope.
+  app.use("/api/*", scopeGuard(deps));
 
   const api = new Hono();
   api.route("/agents", agentRoutes(deps));

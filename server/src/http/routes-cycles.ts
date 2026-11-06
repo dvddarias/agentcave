@@ -11,6 +11,7 @@ import { stream as honoStream, streamSSE } from "hono/streaming";
 import { FINAL } from "../cycle-store.js";
 import { badRequest, conflict } from "../errors.js";
 import { continueSchema, followUpSchema, rerunSchema, startCycleSchema } from "../schemas.js";
+import { scopeOf } from "./scope.js";
 import { contentDisposition, type HttpDeps, intParam, pathAfter, readJson } from "./util.js";
 
 const STATUSES: CycleStatus[] = ["queued", "running", "completed", "failed", "stopped"];
@@ -45,6 +46,7 @@ export function cycleRoutes(deps: HttpDeps): Hono {
         q: q.q,
         limit: q.limit ? intParam(q.limit, "limit") : undefined,
         cursor: q.cursor,
+        scope: scopeOf(c),
       }),
     );
   });

@@ -128,6 +128,7 @@ Base URL `http://<host>:7420/api/v1` (with `BASE_PATH`: `…/<prefix>/api/v1`). 
 | `GET /cycles/:id/images/:sha256` | an image the model was shown, as it was sent (see `Turn.images`) |
 | `GET /cycles?agent=&status=&label.k=v` | list |
 | `/agents…` | create, update (new version), versions, restore, export/import `.md`/`.zip` |
+| `GET /session` | the view scope of this request (see [Read-only views per user](#read-only-views-per-user)) |
 | `/settings`, `/models`, `/stats`, `/health` | the rest |
 
 **Webhooks.** At the end of every turn: `POST webhookUrl` with `{ event: "cycle.completed" | "cycle.failed" | "cycle.stopped", turn, sentAt, cycle }` (a continued turn ends, and calls it, again). Failed deliveries are retried 5 times with backoff. If you set a signing secret in Settings, each call has `X-AgentCave-Signature: sha256=<hmac of the body>`.
@@ -136,7 +137,7 @@ Base URL `http://<host>:7420/api/v1` (with `BASE_PATH`: `…/<prefix>/api/v1`). 
 
 ```bash
 # a fixed version (recommended: it never changes under you)
-npm install https://github.com/dvddarias/agentcave/releases/download/v0.4.1/agentcave-client-0.4.1.tgz
+npm install https://github.com/dvddarias/agentcave/releases/download/v0.5.0/agentcave-client-0.5.0.tgz
 # or the build of the latest push to main
 npm install https://github.com/dvddarias/agentcave/releases/download/client-latest/agentcave-client.tgz
 ```
@@ -188,12 +189,42 @@ example.com {
 ```yaml
 services:
   agentcave:
-    image: ghcr.io/dvddarias/agentcave:0.4.1
+    image: ghcr.io/dvddarias/agentcave:0.5.0
     environment:
       BASE_PATH: /cave
 ```
 
 API clients then use `https://example.com/cave/api/v1` (TypeScript client: `new AgentCave({ baseUrl: "https://example.com/cave" })`). If the proxy sends an `X-Forwarded-Prefix` that doesn't match `BASE_PATH`, AgentCave logs a warning.
+
+### Read-only views per user
+
+A product that runs its agents in AgentCave can show the UI to its own users, each seeing only their own cycles. Its proxy sets one header on every request it forwards:
+
+```
+X-AgentCave-Scope: userId=5; app=checkincopilot
+```
+
+- **Format:** `key=value` label pairs separated by `;` (or `,`). Keys and values are trimmed and percent-decoded, so encode one that has `;`, `,`, `=` or `%` (`encodeURIComponent`). A key may repeat only with the same value. A header that is there but names no usable pair (empty, `userId`, `userId=`, two values for one key) answers **400** `invalid_scope` on every request, rather than opening the full view.
+- **What the request sees:** only cycles whose labels include **every** pair, with their sub-agent cycles (they belong to their root cycle). That covers the cycle list, details, turns, events (stored and live), files, the zip, images, children, webhook deliveries, the global feed `GET /events`, usage stats (`GET /stats`, deleted cycles included) and the queue counts in `GET /health`. Any other cycle answers **404**, as if it didn't exist.
+- **Read-only:** every write (start, stop, follow-up, continue, re-run, delete) answers **403**, and so does every agents, settings, models, maintenance and `openapi.json` endpoint, reads included.
+- **The UI** asks `GET /session` (`{ scope: { userId: "5", … } }`, or `{ scope: null }`) and shows only Cycles and Usage, without Stop, Re-run, Delete, Continue or follow-ups.
+- **Without the header** nothing changes: full access.
+
+AgentCave has no authentication, so it trusts the header as it arrives. **The proxy must always overwrite it, or strip it** for full access: never pass on what the browser sent. With http-proxy-middleware:
+
+```js
+createProxyMiddleware({
+  target: "http://agentcave:7420",
+  on: {
+    proxyReq: (proxyReq, req) => {
+      proxyReq.removeHeader("x-agentcave-scope");
+      if (!isAdmin(req.user)) proxyReq.setHeader("X-AgentCave-Scope", `userId=${encodeURIComponent(req.user.id)}`);
+    },
+  },
+});
+```
+
+A scoped viewer still sees everything about their own cycles that the full view shows: the system prompt, prompts and files, the HTTP command URLs (headers stay masked) and the webhook URL.
 
 ## Development
 

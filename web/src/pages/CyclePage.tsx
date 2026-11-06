@@ -41,6 +41,7 @@ import { api, errorText, keys } from "../lib/api";
 import type { PickedFile } from "../lib/files";
 import { formatCost, formatDuration, formatTokens } from "../lib/format";
 import { useCycleEvents, useNow } from "../lib/live";
+import { useReadOnly } from "../lib/session";
 import { buildTimeline } from "../lib/timeline";
 
 type PanelTab = "files" | "details" | "raw";
@@ -54,6 +55,7 @@ export function CyclePage() {
 function CycleView({ id }: { id: string }) {
   const qc = useQueryClient();
   const navigate = useNavigate();
+  const readOnly = useReadOnly();
   const cycleQ = useQuery({ queryKey: keys.cycle(id), queryFn: () => api.cycles.get(id) });
   const { events, connected } = useCycleEvents(id);
   const timeline = useMemo(() => buildTimeline(events), [events]);
@@ -117,6 +119,7 @@ function CycleView({ id }: { id: string }) {
       : used.timeSec;
   const isFinal = FINAL_STATUSES.includes(cycle.status);
   const continuable =
+    !readOnly &&
     cycle.status === "failed" &&
     !cycle.parentId &&
     (CONTINUABLE_ERRORS as readonly string[]).includes(cycle.error?.code ?? "");
@@ -147,12 +150,12 @@ function CycleView({ id }: { id: string }) {
             <Pill className="text-torch-300">reconnecting…</Pill>
           ) : null}
           <div className="ml-auto flex flex-wrap items-center gap-2">
-            {running ? (
+            {running && !readOnly ? (
               <Button variant="danger" size="sm" loading={stop.isPending} onClick={() => stop.mutate()}>
                 <IconStop size={13} /> Stop
               </Button>
             ) : null}
-            {!cycle.parentId ? (
+            {!cycle.parentId && !readOnly ? (
               <Button size="sm" onClick={() => setRerunOpen(true)}>
                 <IconRefresh size={13} /> Re-run
               </Button>
@@ -162,7 +165,7 @@ function CycleView({ id }: { id: string }) {
                 <IconDownload size={13} /> Files
               </Button>
             </a>
-            {isFinal && !cycle.parentId ? (
+            {isFinal && !cycle.parentId && !readOnly ? (
               <Button
                 size="sm"
                 variant="ghost"
@@ -187,9 +190,13 @@ function CycleView({ id }: { id: string }) {
         <div className="mt-2.5 grid grid-cols-2 gap-x-6 gap-y-2 md:grid-cols-[minmax(0,1.4fr)_repeat(3,minmax(0,1fr))]">
           <div className="col-span-2 min-w-0 md:col-span-1">
             <div className="flex items-center gap-1.5 truncate text-sm text-cave-100">
-              <Link to={`/agents/${cycle.agent.slug}`} className="font-medium hover:text-torch-300">
-                {cycle.agent.name}
-              </Link>
+              {readOnly ? (
+                <span className="font-medium">{cycle.agent.name}</span>
+              ) : (
+                <Link to={`/agents/${cycle.agent.slug}`} className="font-medium hover:text-torch-300">
+                  {cycle.agent.name}
+                </Link>
+              )}
               <span className="text-cave-500">v{cycle.agent.version}</span>
             </div>
             <div className="truncate font-mono text-[11px] text-cave-400">
@@ -266,7 +273,7 @@ function CycleView({ id }: { id: string }) {
               </div>
             ) : null}
             {continuable ? <ContinuePanel cycle={cycle} /> : null}
-            {!cycle.parentId ? <FollowUp cycleId={cycle.id} enabled={isFinal} /> : null}
+            {!cycle.parentId && !readOnly ? <FollowUp cycleId={cycle.id} enabled={isFinal} /> : null}
             <div className="h-8" />
           </div>
         </div>
@@ -300,7 +307,7 @@ function CycleView({ id }: { id: string }) {
         ) : null}
       </div>
       <RerunModal
-        open={rerunOpen}
+        open={rerunOpen && !readOnly}
         onClose={() => setRerunOpen(false)}
         cycleId={cycle.id}
         agentSlug={cycle.agent.slug}

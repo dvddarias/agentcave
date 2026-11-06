@@ -22,6 +22,7 @@ import { reviveImageUrls } from "./engine/images.js";
 import { badRequest, notFound } from "./errors.js";
 import type { EventHub } from "./events.js";
 import { newId } from "./ids.js";
+import { type Scope, scopeSql } from "./scope.js";
 
 export interface CycleRow {
   id: string;
@@ -163,9 +164,17 @@ export interface ListQuery {
   q?: string;
   limit?: number;
   cursor?: string;
+  /** Only cycles in this view scope. */
+  scope?: Scope | null;
 }
 
 export const FINAL: CycleStatus[] = ["completed", "failed", "stopped"];
+
+/** SQL condition: cycle `c` is in the scope (its root's labels have every pair). */
+function inScopeSql(scope: Scope): { sql: string; params: Param[] } {
+  const s = scopeSql("r.labels", scope);
+  return { sql: `EXISTS (SELECT 1 FROM cycles r WHERE r.id = c.root_id AND ${s.sql})`, params: s.params };
+}
 
 const SELECT_JOINED = `SELECT c.*, t.answer AS t_answer, t.changes AS t_changes, t.steps AS t_steps,
     t.elapsed_ms AS t_elapsed_ms, t.run_started_at AS t_run_started_at, t.spent_usd AS t_spent_usd,
@@ -218,6 +227,22 @@ export class CycleStore {
     const row = this.findRow(id);
     if (!row) throw notFound(`Cycle '${id}'`);
     return row;
+  }
+
+  /** Labels of the cycle's root, which decide which view scopes see it (`{}` if it doesn't exist). */
+  rootLabels(id: string): Record<string, string> {
+    const r = one<{ labels: string }>(
+      this.db,
+      "SELECT r.labels FROM cycles c JOIN cycles r ON r.id = c.root_id WHERE c.id = ?",
+      id,
+    );
+    return parseJson<Record<string, string>>(r?.labels, {});
+  }
+
+  /** Whether the cycle exists and is in the scope. */
+  inScope(id: string, scope: Scope): boolean {
+    const s = inScopeSql(scope);
+    return !!one(this.db, `SELECT 1 FROM cycles c WHERE c.id = ? AND ${s.sql}`, id, ...s.params);
   }
 
   get(id: string, opts: { withSystemPrompt?: boolean } = {}): Cycle {
@@ -320,6 +345,11 @@ export class CycleStore {
       const like = `%${q.q.replace(/[%_]/g, "")}%`;
       params.push(like, like, like, like);
     }
+    if (q.scope) {
+      const s = inScopeSql(q.scope);
+      where.push(s.sql);
+      params.push(...s.params);
+    }
     if (q.cursor) {
       const [createdAt, id] = Buffer.from(q.cursor, "base64url").toString("utf8").split("|");
       if (!createdAt || !id) throw badRequest("Invalid cursor");
@@ -354,12 +384,15 @@ export class CycleStore {
       .slice(0, limit);
   }
 
-  counts(): { running: number; queued: number } {
+  /** Top-level cycles running and queued (only those in `scope`, when given). */
+  counts(scope?: Scope | null): { running: number; queued: number } {
+    const s = scope ? inScopeSql(scope) : { sql: "1", params: [] };
     const r = one<{ running: number; queued: number }>(
       this.db,
       `SELECT SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) AS running,
               SUM(CASE WHEN status = 'queued' THEN 1 ELSE 0 END) AS queued
-       FROM cycles WHERE parent_id IS NULL`,
+       FROM cycles c WHERE parent_id IS NULL AND ${s.sql}`,
+      ...s.params,
     );
     return { running: r?.running ?? 0, queued: r?.queued ?? 0 };
   }
@@ -369,6 +402,8 @@ export class CycleStore {
   create(p: CreateCycleParams): CycleRow {
     const id = newId("cyc");
     const now = nowIso();
+    // What decides who sees this cycle's usage: its root's labels (sub-agents have none of their own).
+    const rootLabels = JSON.stringify(p.rootId ? this.rootLabels(p.rootId) : p.labels);
     tx(this.db, () => {
       run(
         this.db,
@@ -402,13 +437,14 @@ export class CycleStore {
       );
       run(
         this.db,
-        `INSERT INTO cycle_usage (cycle_id, agent_id, agent_slug, agent_name, model, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO cycle_usage (cycle_id, agent_id, agent_slug, agent_name, model, root_labels, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
         id,
         p.agentId,
         p.agentSlug,
         p.agentName,
         p.model,
+        rootLabels,
         now,
       );
       this.insertTurn(id, 0, p.prompt, p.inputManifest, p.status ?? "queued");

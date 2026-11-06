@@ -24,6 +24,10 @@ function toEvent(r: EventRow): CycleEvent {
   } as CycleEvent;
 }
 
+export interface CycleDeleted {
+  rootLabels: Record<string, string>;
+}
+
 /**
  * Stores cycle events (paragraph-level, never single tokens) and pushes them live to listeners.
  * Also carries the "a cycle changed" signal used by the global feed.
@@ -65,12 +69,16 @@ export class EventHub {
     return () => this.emitter.off(key, fn);
   }
 
-  /** Signals that a cycle's summary (status, usage, activity…) changed. */
-  touch(cycleId: string, deleted = false): void {
+  /**
+   * Signals that a cycle's summary (status, usage, activity…) changed, or with `deleted` that it is
+   * gone. A deleted cycle can't be looked up any more, so it brings its root's labels: they decide
+   * which view scopes hear of it.
+   */
+  touch(cycleId: string, deleted?: CycleDeleted): void {
     this.emitter.emit("cycle-changed", cycleId, deleted);
   }
 
-  onCycleChanged(fn: (cycleId: string, deleted: boolean) => void): () => void {
+  onCycleChanged(fn: (cycleId: string, deleted: CycleDeleted | undefined) => void): () => void {
     this.emitter.on("cycle-changed", fn);
     return () => this.emitter.off("cycle-changed", fn);
   }
