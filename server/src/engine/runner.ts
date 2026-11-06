@@ -9,6 +9,7 @@ import type {
   FileChanges,
   Limits,
   StepUsage,
+  TurnImage,
 } from "@agentcave/client";
 import {
   type JSONSchema7,
@@ -19,7 +20,9 @@ import {
   ToolLoopAgent,
   type ToolSet,
   tool,
+  wrapLanguageModel,
 } from "ai";
+import type { Bash } from "just-bash";
 import { z } from "zod";
 import { diffManifests, type Manifest } from "../blobs.js";
 import type { Ctx } from "../context.js";
@@ -32,7 +35,18 @@ import { prepareAnswerSchema } from "./answer-schema.js";
 import { Budget, RunAbort, RunError } from "./budget.js";
 import { ParagraphChunker } from "./chunker.js";
 import { createHttpCommands, type StoredCommand } from "./http-commands.js";
-import { buildUserMessage, subagentToolName } from "./prompt.js";
+import {
+  ImageError,
+  imageDownloader,
+  MAX_SOURCE_BYTES,
+  prepareImage,
+  reviveImageUrls,
+  sniffImage,
+  toolImagePart,
+  toolImagesMiddleware,
+  VIEWABLE_FORMATS,
+} from "./images.js";
+import { buildUserMessage, type PromptImages, subagentToolName } from "./prompt.js";
 import { createSandbox } from "./sandbox.js";
 import { maybeTrim } from "./trim.js";
 
@@ -59,6 +73,8 @@ interface LoopCtx {
   settings: InternalSettings;
   workspace: string;
   inputManifest: Manifest;
+  /** Image files of the turn's input shown to the model with the prompt (and why others were not). */
+  promptImages: PromptImages;
   ac: AbortController;
   budget: Budget;
   ancestors: string[];
@@ -139,6 +155,15 @@ export class Runner {
         startSnapshot = await blobs.snapshotDir(workspace);
         cycles.setStartSnapshot(turn.id, startSnapshot);
       }
+      // Images sent with the prompt are prepared when the turn starts (again after a restart);
+      // a continued turn keeps the ones its messages already show.
+      let promptImages: PromptImages = { shown: [], notShown: [] };
+      if (resume) {
+        promptImages.shown = parseJson<TurnImage[]>(turn.images, []).filter((i) => i.source === "prompt");
+      } else {
+        promptImages = await this.promptImages(cycle, inputManifest, settings);
+        cycles.setTurnImages(turn.id, promptImages.shown);
+      }
       if (resume) {
         emit({
           type: "turn.continue",
@@ -150,6 +175,8 @@ export class Runner {
           data: {
             prompt: turn.prompt,
             files: Object.keys(inputManifest).sort(),
+            images: promptImages.shown,
+            imagesNotShown: promptImages.notShown,
             systemPrompt: cycle.system_prompt,
             model: cycle.model,
             reasoning: cycle.reasoning,
@@ -162,6 +189,7 @@ export class Runner {
         settings,
         workspace,
         inputManifest,
+        promptImages,
         ac,
         budget,
         ancestors: cycles.ancestorIds(cycle),
@@ -229,6 +257,7 @@ export class Runner {
   private async loop(c: LoopCtx): Promise<Answer> {
     const { cycle, turn, settings, ac, budget, emit, state } = c;
     const { agents, models, cycles } = this.ctx;
+    const vision = cycle.vision === 1;
     // The step cap and the reminders count per run, so a continued turn gets them afresh.
     const start = { ...state };
     const stepCapHit = () => state.steps - start.steps >= settings.hardStepCap;
@@ -255,6 +284,7 @@ export class Runner {
       internet: config.internet,
       javascript: config.javascript,
       python: config.python,
+      vision,
       commandTimeoutMs: settings.commandTimeoutSec * 1000,
       outputCapBytes: settings.toolOutputCapBytes,
       signal: ac.signal,
@@ -285,20 +315,31 @@ export class Runner {
       },
     });
 
-    const tools: ToolSet = { ...sandbox.tools, submit_answer, ...this.subagentTools(c, config) };
-    const model = this.ctx.modelFactory({
+    const tools: ToolSet = {
+      ...sandbox.tools,
+      ...(vision ? { view_image: this.viewImageTool(c, sandbox.bash) } : {}),
+      submit_answer,
+      ...this.subagentTools(c, config),
+    };
+    const baseModel = this.ctx.modelFactory({
       modelId: cycle.model,
       reasoning: cycle.reasoning,
       supportsReasoning: models.get(cycle.model)?.supportsReasoning,
       token: settings.openrouterToken,
       sessionId: cycle.root_id,
     });
+    const model =
+      vision && typeof baseModel !== "string"
+        ? wrapLanguageModel({ model: baseModel, middleware: toolImagesMiddleware })
+        : baseModel;
 
     const agent = new ToolLoopAgent({
       model,
       instructions: cycle.system_prompt,
       tools,
       maxRetries: 2,
+      // Saved messages point at images in the blob store; this reads them when a step is sent.
+      experimental_download: vision ? imageDownloader(this.ctx.blobs) : undefined,
       stopWhen: [() => submitted !== null, stepCapHit, () => budget.exceeded() !== null],
       prepareStep: ({ messages }) => {
         const r = maybeTrim(messages, {
@@ -317,10 +358,15 @@ export class Runner {
 
     const prior = cycles.priorMessages(cycle.id, turn.idx);
     // A continued turn picks up its own conversation, then is told to carry on.
-    const saved = c.resume ? parseJson<ModelMessage[]>(turn.messages, []) : [];
+    const saved = c.resume ? reviveImageUrls(parseJson<ModelMessage[]>(turn.messages, [])) : [];
     const turnMessages: ModelMessage[] = saved.length
       ? saved
-      : [{ role: "user", content: buildUserMessage(turn.prompt, c.inputManifest, turn.notice) }];
+      : [
+          {
+            role: "user",
+            content: buildUserMessage(turn.prompt, c.inputManifest, turn.notice, c.promptImages),
+          },
+        ];
     if (c.resume) turnMessages.push({ role: "user", content: c.resume.message });
     cycles.saveMessages(turn.id, turnMessages, state.nudges);
 
@@ -553,6 +599,115 @@ export class Runner {
   }
 
   // ---------------------------------------------------------------------------
+  // Images
+
+  /** Image files of a turn's input, ready to show the model with its prompt. */
+  private async promptImages(
+    cycle: CycleRow,
+    manifest: Manifest,
+    settings: InternalSettings,
+  ): Promise<PromptImages> {
+    const out: PromptImages = { shown: [], notShown: [] };
+    // A sub-agent's input is its parent's whole workspace: it opens what it needs with view_image.
+    if (cycle.vision !== 1 || cycle.parent_id) return out;
+    const { blobs } = this.ctx;
+    const max = settings.maxPromptImages;
+    const overLimit =
+      max === 0
+        ? "images are not shown with a prompt here; use `view_image` to look at it"
+        : `only ${max} image${max === 1 ? " is" : "s are"} shown with a prompt; use \`view_image\` to look at it`;
+    for (const rel of Object.keys(manifest).sort()) {
+      const entry = manifest[rel];
+      if (!sniffImage(await blobs.readHead(entry.sha256, 4096))) continue;
+      const file = `/workspace/${rel}`;
+      if (out.shown.length >= max) {
+        out.notShown.push({ path: file, reason: overLimit });
+        continue;
+      }
+      try {
+        const img = await prepareImage(await blobs.read(entry.sha256), { maxEdge: settings.imageMaxEdgePx });
+        const stored = img.converted ? await blobs.put(img.data) : entry;
+        out.shown.push({
+          path: file,
+          source: "prompt",
+          mediaType: img.mediaType,
+          width: img.width,
+          height: img.height,
+          size: stored.size,
+          sha256: stored.sha256,
+        });
+      } catch (err) {
+        if (!(err instanceof ImageError)) throw err;
+        out.notShown.push({ path: file, reason: err.message });
+      }
+    }
+    return out;
+  }
+
+  /** `view_image`: shows the model any image file in the sandbox. */
+  private viewImageTool(c: LoopCtx, bash: Bash): Tool {
+    const maxEdge = c.settings.imageMaxEdgePx;
+    return tool({
+      description: `Look at an image file (${VIEWABLE_FORMATS}) anywhere in the sandbox: one the user sent, one in /agent, or one you made or downloaded. The image is shown to you with the result. Big images are scaled down to at most ${maxEdge} pixels on their longest side, and only the first frame of an animation is shown.`,
+      inputSchema: z.object({
+        path: z
+          .string()
+          .describe(
+            "Path of the image file, e.g. /workspace/chart.png (a relative path starts at /workspace).",
+          ),
+      }),
+      execute: async ({ path: input }, { toolCallId }) => {
+        const file = path.posix.resolve("/workspace", input);
+        const stat = await bash.fs.stat(file).catch(() => null);
+        if (!stat) throw new Error(`${file} does not exist.`);
+        if (!stat.isFile) throw new Error(`${file} is not a file.`);
+        if (stat.size > MAX_SOURCE_BYTES) {
+          throw new Error(
+            `${file} is too big to open (${(stat.size / 1024 / 1024).toFixed(1)} MB; the limit is ${MAX_SOURCE_BYTES / 1024 / 1024} MB).`,
+          );
+        }
+        const img = await prepareImage(Buffer.from(await bash.fs.readFileBuffer(file)), { maxEdge });
+        const stored = await this.ctx.blobs.put(img.data);
+        const image: TurnImage = {
+          path: file,
+          source: "view_image",
+          mediaType: img.mediaType,
+          width: img.width,
+          height: img.height,
+          size: stored.size,
+          sha256: stored.sha256,
+          callId: toolCallId,
+        };
+        this.ctx.cycles.addTurnImage(c.turn.id, image);
+        return {
+          path: file,
+          mediaType: image.mediaType,
+          width: image.width,
+          height: image.height,
+          size: image.size,
+          sha256: image.sha256,
+          sourceWidth: img.sourceWidth,
+          sourceHeight: img.sourceHeight,
+        };
+      },
+      // The image goes back to the model with the result. In saved messages it is a reference.
+      toModelOutput: ({ output }) => {
+        const scaled =
+          output.width < output.sourceWidth || output.height < output.sourceHeight
+            ? `, scaled down from ${output.sourceWidth}×${output.sourceHeight}`
+            : "";
+        return {
+          type: "content",
+          value: [
+            { type: "text", text: `${output.path} (${output.width}×${output.height}${scaled}):` },
+            toolImagePart(output),
+          ],
+        };
+      },
+    });
+  }
+
+  // ---------------------------------------------------------------------------
   // Sub-agents
 
   private subagentTools(c: LoopCtx, config: AgentConfig): Record<string, Tool> {
@@ -692,6 +847,7 @@ export function describeTool(name: string, input: unknown): string {
   if (name === "bash") return `running bash: ${clip(i.command)}`;
   if (name === "readFile") return `reading ${clip(i.path)}`;
   if (name === "writeFile") return `writing ${clip(i.path)}`;
+  if (name === "view_image") return `looking at ${clip(i.path)}`;
   if (name === "submit_answer") return "submitting the answer";
   if (name.startsWith("ask_")) return `asking sub-agent ${name.slice(4)}`;
   return `using ${name}`;

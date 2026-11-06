@@ -14,7 +14,7 @@ import { JsonEditor } from "../components/Editors";
 import { FileDrop } from "../components/FileDrop";
 import { IconCode, IconPlay, IconPlus, IconX } from "../components/icons";
 import { CodeBlock } from "../components/Markdown";
-import { ModelPicker } from "../components/ModelPicker";
+import { ModelPicker, useModels } from "../components/ModelPicker";
 import {
   Button,
   Card,
@@ -33,6 +33,9 @@ import { api, keys, publicUrl } from "../lib/api";
 import type { PickedFile } from "../lib/files";
 
 let labelSeq = 0;
+
+/** Files the server will likely treat as images (it checks their content). */
+const IMAGE_FILE = /\.(png|jpe?g|gif|webp|avif|tiff?|svg)$/i;
 
 const EXAMPLE_COMMANDS = `[
   {
@@ -142,6 +145,10 @@ export function PlaygroundPage() {
     if (!agent && agents.data?.length) setAgent(agents.data[0].slug);
   }, [agents.data, agent]);
   const current = agents.data?.find((a) => a.slug === agent);
+  const models = useModels();
+  const modelId = model || current?.config.model || "";
+  const sees = models.data?.models.find((m) => m.id === modelId)?.supportsImages;
+  const images = files.filter((f) => IMAGE_FILE.test(f.path)).length;
 
   const request = useMemo((): StartCycleRequest | null => {
     if (!agent) return null;
@@ -252,6 +259,13 @@ export function PlaygroundPage() {
           <Card className="p-4">
             <div className="mb-2 text-xs font-medium text-cave-300">Files (put into /workspace)</div>
             <FileDrop files={files} onChange={setFiles} />
+            {images > 0 && sees !== undefined ? (
+              <div className={cx("mt-2 text-[11px]", sees ? "text-cave-400" : "text-torch-300")}>
+                {sees
+                  ? `${modelId} can see images: ${images === 1 ? "the image is" : "they are"} shown to it with the prompt.`
+                  : `${modelId} can’t see images: ${images === 1 ? "it stays a plain file" : "they stay plain files"} in /workspace.`}
+              </div>
+            ) : null}
           </Card>
           <Card className="space-y-3 p-4">
             <Toggle

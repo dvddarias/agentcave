@@ -124,6 +124,16 @@ export function cycleRoutes(deps: HttpDeps): Hono {
     });
   });
 
+  app.get("/:id/images/:sha256", (c) => {
+    const image = service.openImage(c.req.param("id"), c.req.param("sha256"));
+    return c.body(image.stream, 200, {
+      "content-type": image.type,
+      "content-length": String(image.size),
+      // Addressed by content: it never changes.
+      "cache-control": "private, max-age=31536000, immutable",
+    });
+  });
+
   app.get("/:id/events", (c) => {
     const id = c.req.param("id");
     ctx.cycles.getRow(id);

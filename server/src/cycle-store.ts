@@ -11,12 +11,14 @@ import type {
   ReasoningEffort,
   StepUsage,
   Turn,
+  TurnImage,
   Usage,
 } from "@agentcave/client";
 import type { ModelMessage } from "ai";
 import type { Manifest } from "./blobs.js";
 import { all, type DB, nowIso, one, type Param, parseJson, run, tx } from "./db.js";
 import { maskCommands, type StoredCommand } from "./engine/http-commands.js";
+import { reviveImageUrls } from "./engine/images.js";
 import { badRequest, notFound } from "./errors.js";
 import type { EventHub } from "./events.js";
 import { newId } from "./ids.js";
@@ -36,6 +38,8 @@ export interface CycleRow {
   status: CycleStatus;
   model: string;
   reasoning: ReasoningEffort;
+  /** 1 when the model can see images. */
+  vision: number;
   limits: string;
   output_schema: string | null;
   labels: string;
@@ -102,6 +106,8 @@ export interface TurnRow {
   resume: string | null;
   /** A line AgentCave adds to the turn's user message (e.g. which commands a follow-up changed). */
   notice: string | null;
+  /** JSON `TurnImage[]`: the images this turn's messages show the model. */
+  images: string;
 }
 
 /** A continue request waiting for the runner. */
@@ -136,6 +142,7 @@ export interface CreateCycleParams {
   rerunOf: string | null;
   model: string;
   reasoning: ReasoningEffort;
+  vision: boolean;
   limits: Limits;
   outputSchema: JsonSchema | null;
   labels: Record<string, string>;
@@ -282,7 +289,7 @@ export class CycleStore {
       "SELECT messages FROM turns WHERE cycle_id = ? AND idx < ? ORDER BY idx",
       cycleId,
       idx,
-    ).flatMap((r) => parseJson<ModelMessage[]>(r.messages, []));
+    ).flatMap((r) => reviveImageUrls(parseJson<ModelMessage[]>(r.messages, [])));
   }
 
   list(q: ListQuery): { cycles: Cycle[]; nextCursor: string | null } {
@@ -366,9 +373,9 @@ export class CycleStore {
       run(
         this.db,
         `INSERT INTO cycles (id, agent_id, agent_version_id, agent_slug, agent_name, agent_version, parent_id, root_id, depth,
-          source, rerun_of, status, model, reasoning, limits, output_schema, labels, webhook_url, commands, system_prompt,
-          turn, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
+          source, rerun_of, status, model, reasoning, vision, limits, output_schema, labels, webhook_url, commands,
+          system_prompt, turn, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
         id,
         p.agentId,
         p.agentVersionId,
@@ -383,6 +390,7 @@ export class CycleStore {
         p.status ?? "queued",
         p.model,
         p.reasoning,
+        p.vision ? 1 : 0,
         JSON.stringify(p.limits),
         p.outputSchema ? JSON.stringify(p.outputSchema) : null,
         JSON.stringify(p.labels),
@@ -499,6 +507,29 @@ export class CycleStore {
     run(this.db, "UPDATE turns SET start_snapshot = ? WHERE id = ?", JSON.stringify(manifest), turnId);
   }
 
+  /** The images a turn's messages show the model (replaces the list). */
+  setTurnImages(turnId: string, images: TurnImage[]): void {
+    run(this.db, "UPDATE turns SET images = ? WHERE id = ?", JSON.stringify(images), turnId);
+  }
+
+  addTurnImage(turnId: string, image: TurnImage): void {
+    const row = one<{ images: string }>(this.db, "SELECT images FROM turns WHERE id = ?", turnId);
+    this.setTurnImages(turnId, [...parseJson<TurnImage[]>(row?.images, []), image]);
+  }
+
+  /** An image one of the cycle's turns showed the model. */
+  findImage(cycleId: string, sha256: string): TurnImage | undefined {
+    for (const r of all<{ images: string }>(
+      this.db,
+      "SELECT images FROM turns WHERE cycle_id = ?",
+      cycleId,
+    )) {
+      const hit = parseJson<TurnImage[]>(r.images, []).find((i) => i.sha256 === sha256);
+      if (hit) return hit;
+    }
+    return undefined;
+  }
+
   saveMessages(turnId: string, messages: ModelMessage[], nudges: number): void {
     run(
       this.db,
@@ -513,7 +544,7 @@ export class CycleStore {
   resetTurnForRetry(turnId: string): void {
     run(
       this.db,
-      `UPDATE turns SET status = 'queued', messages = '[]', nudges = 0, answer = NULL, changes = NULL, error_code = NULL,
+      `UPDATE turns SET status = 'queued', messages = '[]', images = '[]', nudges = 0, answer = NULL, changes = NULL, error_code = NULL,
         error_message = NULL, input_tokens = 0, output_tokens = 0, reasoning_tokens = 0, cached_tokens = 0,
         cost_usd = 0, cost_estimated = 0, steps = 0, elapsed_ms = 0, spent_usd = 0, spent_tokens = 0, last_step = 0,
         resume = NULL WHERE id = ?`,
@@ -711,6 +742,7 @@ export class CycleStore {
       agent: { slug: r.agent_slug, name: r.agent_name, version: r.agent_version },
       model: r.model,
       reasoning: r.reasoning,
+      vision: r.vision === 1,
       limits: parseJson<Limits>(r.limits, {}),
       outputSchema: parseJson<JsonSchema | null>(r.output_schema, null),
       labels: parseJson<Record<string, string>>(r.labels, {}),
@@ -772,6 +804,7 @@ export class CycleStore {
       index: t.idx,
       prompt: t.prompt,
       inputFiles: Object.keys(parseJson<Manifest>(t.input_manifest, {})).sort(),
+      images: parseJson<TurnImage[]>(t.images, []),
       status: t.status,
       answer: parseJson<Answer | null>(t.answer, null),
       files: parseJson<FileChanges | null>(t.changes, null),

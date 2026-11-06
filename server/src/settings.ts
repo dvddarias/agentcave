@@ -15,6 +15,8 @@ export interface InternalSettings {
   contextTrimRatio: number;
   maxRequestMb: number;
   webhookSecret: string | null;
+  imageMaxEdgePx: number;
+  maxPromptImages: number;
 }
 
 export const DEFAULT_SETTINGS: InternalSettings = {
@@ -30,6 +32,8 @@ export const DEFAULT_SETTINGS: InternalSettings = {
   contextTrimRatio: 0.6,
   maxRequestMb: 50,
   webhookSecret: null,
+  imageMaxEdgePx: 1568,
+  maxPromptImages: 20,
 };
 
 type Listener = (s: InternalSettings) => void;
@@ -105,6 +109,8 @@ export class SettingsService {
       contextTrimRatio: s.contextTrimRatio,
       maxRequestMb: s.maxRequestMb,
       webhookSecret: s.webhookSecret,
+      imageMaxEdgePx: s.imageMaxEdgePx,
+      maxPromptImages: s.maxPromptImages,
     };
   }
 }

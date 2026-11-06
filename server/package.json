@@ -1,6 +1,6 @@
 {
   "name": "@agentcave/server",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "main": "dist/index.js",
@@ -23,11 +23,12 @@
     "fflate": "^0.8.3",
     "hono": "^4.13.13",
     "just-bash": "^3.6.0",
+    "sharp": "^0.35.5",
     "yaml": "^2.9.0",
     "zod": "^4.6.6"
   },
   "devDependencies": {
-    "@agentcave/client": "0.3.0",
+    "@agentcave/client": "0.4.0",
     "@types/node": "^24.0.0",
     "esbuild": "^0.28.2",
     "tsx": "^4.23.15",

@@ -3,6 +3,7 @@ import type { AgentInternet } from "@agentcave/client";
 import type { Tool } from "ai";
 import { createBashTool } from "bash-tool";
 import { Bash, type Command, InMemoryFs, MountableFs, OverlayFs, ReadWriteFs } from "just-bash";
+import { sniffImage } from "./images.js";
 
 export interface SandboxOptions {
   workspaceDir: string;
@@ -10,6 +11,8 @@ export interface SandboxOptions {
   internet: AgentInternet;
   javascript: boolean;
   python: boolean;
+  /** The model can see images (it has the `view_image` tool). */
+  vision: boolean;
   commandTimeoutMs: number;
   outputCapBytes: number;
   signal: AbortSignal;
@@ -94,7 +97,17 @@ export async function createSandbox(o: SandboxOptions) {
       }
     },
     async readFile(path: string): Promise<string> {
-      const text = await bash.fs.readFile(path);
+      const bytes = await bash.fs.readFileBuffer(path);
+      const head = bytes.subarray(0, 8192);
+      if (head.includes(0)) {
+        const hint = !sniffImage(head)
+          ? ""
+          : o.vision
+            ? " It is an image: use the `view_image` tool to look at it."
+            : " It is an image.";
+        return `[${path} is a binary file (${bytes.length} bytes), not text.${hint}]`;
+      }
+      const text = new TextDecoder().decode(bytes);
       if (text.length <= cap) return text;
       return `${text.slice(0, cap)}\n\n[file is ${text.length} characters; only the first ${cap} are shown. Use bash (head, sed -n, grep) to read the rest.]`;
     },

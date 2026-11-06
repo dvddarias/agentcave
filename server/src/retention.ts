@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type { Manifest } from "./blobs.js";
 import type { Ctx } from "./context.js";
-import { all, run } from "./db.js";
+import { all, parseJson, run } from "./db.js";
 import { log } from "./log.js";
 
 /** Deletes a cycle with all its sub-agent cycles, events, turns and workspaces. */
@@ -64,9 +64,9 @@ export class RetentionService {
     for (const r of all<{ sha256: string }>(this.ctx.db, "SELECT DISTINCT sha256 FROM agent_version_files")) {
       refs.add(r.sha256);
     }
-    const turns = all<{ a: string; b: string | null; c: string | null }>(
+    const turns = all<{ a: string; b: string | null; c: string | null; images: string }>(
       this.ctx.db,
-      "SELECT input_manifest AS a, start_snapshot AS b, end_snapshot AS c FROM turns",
+      "SELECT input_manifest AS a, start_snapshot AS b, end_snapshot AS c, images FROM turns",
     );
     for (const t of turns) {
       for (const json of [t.a, t.b, t.c]) {
@@ -77,6 +77,8 @@ export class RetentionService {
           // ignore
         }
       }
+      // Images the model was shown (scaled-down copies, or files it opened outside /workspace).
+      for (const i of parseJson<{ sha256: string }[]>(t.images, [])) refs.add(i.sha256);
     }
     return refs;
   }

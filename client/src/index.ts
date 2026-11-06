@@ -227,6 +227,8 @@ export class AgentCave {
       const res = await this.raw("GET", `/cycles/${id}/files/${encodePath(path)}`);
       return new Uint8Array(await res.arrayBuffer());
     },
+    /** An image the model was shown (`TurnImage.sha256`), as it saw it. */
+    imageUrl: (id: string, sha256: string) => this.url(`/cycles/${id}/images/${sha256}`),
     zipUrl: (id: string, opts: { changedOnly?: boolean } = {}) =>
       this.url(`/cycles/${id}/files.zip${opts.changedOnly ? "?changed=true" : ""}`),
     downloadZip: async (id: string, opts: { changedOnly?: boolean } = {}) => {

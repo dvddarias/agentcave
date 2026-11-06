@@ -183,6 +183,12 @@ const MIGRATIONS: string[] = [
   ALTER TABLE cycles ADD COLUMN commands TEXT NOT NULL DEFAULT '[]';
   ALTER TABLE turns ADD COLUMN notice TEXT;
   `,
+  // 5 — images: whether the cycle's model can see images, and the images each turn showed it (JSON
+  // `TurnImage[]`; retention keeps their blobs while the turn exists).
+  `
+  ALTER TABLE cycles ADD COLUMN vision INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE turns ADD COLUMN images TEXT NOT NULL DEFAULT '[]';
+  `,
 ];
 
 export function openDb(file: string): DB {

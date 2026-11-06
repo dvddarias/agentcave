@@ -8,7 +8,7 @@ Straight from the GitHub Releases:
 
 ```bash
 # a fixed version (recommended)
-npm install https://github.com/dvddarias/agentcave/releases/download/v0.3.0/agentcave-client-0.3.0.tgz
+npm install https://github.com/dvddarias/agentcave/releases/download/v0.4.0/agentcave-client-0.4.0.tgz
 # or the build of the latest push to main (re-run this command to update)
 npm install https://github.com/dvddarias/agentcave/releases/download/client-latest/agentcave-client.tgz
 ```
@@ -69,6 +69,19 @@ await cave.cycles.followUp(support.id, {
 for await (const e of cave.cycles.events(support.id)) {
   if (e.type === "http.call") console.log(e.data.command, e.data.status, `${e.data.ms} ms`);
 }
+```
+
+With a model that takes images (`cycle.vision`), image files are shown to it with the prompt, and it can open others with its `view_image` tool. Each turn lists what it saw:
+
+```ts
+const shot = await cave.cycles.start({
+  agent: "designer",
+  prompt: "What is wrong with this form?",
+  files: [fileInput("form.png", pngBytes)],
+});
+await cave.cycles.wait(shot.id);
+const [turn] = await cave.cycles.turns(shot.id);
+for (const img of turn.images) console.log(img.path, img.source, cave.cycles.imageUrl(shot.id, img.sha256));
 ```
 
 Errors are thrown as `AgentCaveError` with `status`, `code` and `message`.

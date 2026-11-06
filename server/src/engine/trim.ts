@@ -1,14 +1,20 @@
 import type { ModelMessage } from "ai";
+import { countImages, IMAGE_TOKENS } from "./images.js";
 
 const MARK = "[output shortened by AgentCave to save context]";
 
 export function estimateTokens(messages: ModelMessage[], extraChars = 0): number {
-  return Math.ceil((JSON.stringify(messages).length + extraChars) / 4);
+  // Images are stored as short references: count what they cost instead.
+  return Math.ceil((JSON.stringify(messages).length + extraChars) / 4) + countImages(messages) * IMAGE_TOKENS;
 }
 
 function preview(output: unknown, chars = 500): string {
   let text: string;
-  if (output && typeof output === "object" && "value" in output) {
+  if (output && typeof output === "object" && (output as { type?: string }).type === "content") {
+    // Text and images (e.g. `view_image`): keep the text; the image goes.
+    const parts = (output as { value: { type: string; text?: string }[] }).value;
+    text = parts.map((p) => (p.type === "text" ? p.text : "[image]")).join("\n");
+  } else if (output && typeof output === "object" && "value" in output) {
     const value = (output as { value: unknown }).value;
     text = typeof value === "string" ? value : JSON.stringify(value);
   } else {

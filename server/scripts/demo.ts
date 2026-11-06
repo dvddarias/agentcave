@@ -1,7 +1,8 @@
 /**
- * Demo mode: runs AgentCave with a scripted fake model (no OpenRouter token, $0) and three sample agents,
+ * Demo mode: runs AgentCave with a scripted fake model (no OpenRouter token, $0) and four sample agents,
  * so you can explore the UI and watch thinking/text/tool calls stream in. The support agent uses an HTTP
- * command served by this script itself (a tiny fake shop at /demo-shop/orders).
+ * command served by this script itself (a tiny fake shop at /demo-shop/orders). The designer's model
+ * "sees" images: it gets a screenshot with its prompt and looks at the chart it draws with view_image.
  *
  *   npm run demo            → http://localhost:7420
  */
@@ -14,6 +15,7 @@ import type { LanguageModelV4CallOptions, LanguageModelV4StreamPart } from "@ai-
 import { serve } from "@hono/node-server";
 import { simulateReadableStream } from "ai";
 import { MockLanguageModelV4 } from "ai/test";
+import sharp from "sharp";
 import { createAgentCave } from "../src/app.js";
 import { normalizeBasePath } from "../src/http/base-path.js";
 import { log } from "../src/log.js";
@@ -157,11 +159,97 @@ const SUPPORT: ((o: LanguageModelV4CallOptions) => Part[])[] = [
   ],
 ];
 
+const CHART_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="480" height="260" viewBox="0 0 480 260">
+  <rect width="480" height="260" fill="#ffffff"/>
+  <text x="24" y="34" font-family="sans-serif" font-size="18" fill="#222">Sign-up conversion by week</text>
+  <line x1="40" y1="220" x2="456" y2="220" stroke="#999"/>
+  <g fill="#3b82f6">
+    <rect x="60" y="92" width="56" height="128"/>
+    <rect x="160" y="84" width="56" height="136"/>
+    <rect x="260" y="150" width="56" height="70"/>
+    <rect x="360" y="160" width="56" height="60"/>
+  </g>
+  <rect x="245" y="56" width="2" height="164" fill="#ef4444"/>
+  <text x="252" y="70" font-family="sans-serif" font-size="12" fill="#ef4444">redesign</text>
+  <g font-family="sans-serif" font-size="12" fill="#444">
+    <text x="70" y="240">W1 32%</text><text x="170" y="240">W2 34%</text>
+    <text x="270" y="240">W3 18%</text><text x="370" y="240">W4 15%</text>
+  </g>
+</svg>
+`;
+
+const DESIGNER: ((o: LanguageModelV4CallOptions) => Part[])[] = [
+  () => [
+    ...reasoning(
+      'The screenshot shows the new sign-up form. The "Create account" button is light grey on white, so it hardly looks clickable, and the password error sits under the email field.\n\nThe user also wants the weekly numbers as a chart. I\'ll read stats.csv first.',
+    ),
+    ...text("I can see the screenshot. Let me look at the numbers next."),
+    call("bash", { command: "cat stats.csv" }),
+    finish("tool-calls", 0.0041, 3800, 240, 120),
+  ],
+  () => [
+    ...reasoning(
+      "Conversion halves after the redesign in week 3. A bar chart with a marker at the redesign will make that obvious.",
+    ),
+    call("writeFile", { path: "conversion.svg", content: CHART_SVG }),
+    finish("tool-calls", 0.0033, 4100, 520, 60),
+  ],
+  () => [
+    ...reasoning("Before I hand it over, let me look at the chart to check that it reads well."),
+    call("view_image", { path: "conversion.svg" }),
+    finish("tool-calls", 0.0021, 4600, 40, 30),
+  ],
+  () => [
+    ...text("The chart reads well: the drop after the redesign stands out."),
+    call("submit_answer", {
+      answer:
+        "## What changed\n\nConversion fell from **34%** to **18%** the week of the redesign (see `conversion.svg`).\n\n## Likely causes, from the screenshot\n\n1. The **Create account** button is light grey on white: it looks disabled.\n2. The password error shows under the email field.\n\n## Fix first\n\nGive the button the brand blue with a 4.5:1 contrast ratio, then move the error under its own field.",
+    }),
+    finish("tool-calls", 0.0036, 6200, 210, 0),
+  ],
+];
+
 const SCRIPTS: Record<string, ((o: LanguageModelV4CallOptions) => Part[])[]> = {
   "demo/reviewer": REVIEWER,
   "demo/test-writer": TEST_WRITER,
   "demo/support": SUPPORT,
+  "demo/designer": DESIGNER,
 };
+
+/** The demo models in the model catalog; the designer's takes images. */
+const DEMO_MODELS = Object.keys(SCRIPTS).map((model) => ({
+  id: model,
+  name: `Demo ${model.slice(5)}`,
+  context_length: 200_000,
+  architecture: { input_modalities: model === "demo/designer" ? ["text", "image"] : ["text"] },
+  pricing: { prompt: "0.000001", completion: "0.000004" },
+  supported_parameters: ["tools", "reasoning"],
+}));
+
+/** OpenRouter's model catalog (when it can be reached) plus the demo models. */
+const demoFetch: typeof fetch = async (input, init) => {
+  const url = input instanceof Request ? input.url : String(input);
+  if (url !== "https://openrouter.ai/api/v1/models") return fetch(input, init);
+  const real = await fetch(input, init)
+    .then((r) => (r.ok ? (r.json() as Promise<{ data: unknown[] }>) : { data: [] }))
+    .catch(() => ({ data: [] }));
+  return Response.json({ data: [...real.data, ...DEMO_MODELS] });
+};
+
+/** A sign-up form "screenshot" for the designer: a grey button that hardly looks clickable. */
+const MOCKUP_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="720" height="480" viewBox="0 0 720 480">
+  <rect width="720" height="480" fill="#f4f5f7"/>
+  <rect x="190" y="50" width="340" height="380" rx="14" fill="#ffffff" stroke="#e2e4e8"/>
+  <text x="220" y="105" font-family="sans-serif" font-size="24" font-weight="bold" fill="#1f2328">Create your account</text>
+  <text x="220" y="150" font-family="sans-serif" font-size="13" fill="#57606a">Email</text>
+  <rect x="220" y="160" width="280" height="40" rx="6" fill="#fff" stroke="#d0d7de"/>
+  <text x="220" y="222" font-family="sans-serif" font-size="12" fill="#cf222e">Password must be 8+ characters</text>
+  <text x="220" y="255" font-family="sans-serif" font-size="13" fill="#57606a">Password</text>
+  <rect x="220" y="265" width="280" height="40" rx="6" fill="#fff" stroke="#d0d7de"/>
+  <rect x="220" y="340" width="280" height="44" rx="8" fill="#eceef1"/>
+  <text x="305" y="368" font-family="sans-serif" font-size="15" fill="#b4b9c0">Create account</text>
+</svg>
+`;
 
 function demoModel(req: ModelRequest) {
   return new MockLanguageModelV4({
@@ -230,7 +318,10 @@ async function main() {
     webDist: existsSync(path.join(webDist, "index.html")) ? webDist : null,
     basePath: process.env.BASE_PATH,
     modelFactory: Object.assign(demoModel, { requiresToken: false }),
+    fetchImpl: demoFetch,
   });
+  // A catalog cached by an earlier run may not have the demo models yet.
+  await cave.ctx.models.refresh().catch(() => {});
   const agents = cave.ctx.agents;
   try {
     agents.getRow("test-writer");
@@ -276,6 +367,18 @@ async function main() {
       systemPrompt: "# Role\n\nYou answer customers about their orders. Be short and friendly.",
     });
   }
+  try {
+    agents.getRow("designer");
+  } catch {
+    await agents.create({
+      slug: "designer",
+      name: "Designer",
+      description: "Looks at screenshots and data, and draws charts. Its model can see images.",
+      model: "demo/designer",
+      reasoning: "medium",
+      systemPrompt: "# Role\n\nYou review product screens and explain numbers with clear charts (SVG).",
+    });
+  }
   cave.start();
   const port = Number(process.env.PORT ?? 7420);
   const fetchDemo = (req: Request) =>
@@ -315,6 +418,24 @@ async function main() {
             headers: { Authorization: "Bearer demo-token" },
           },
         ],
+        source: "api",
+      });
+      await cave.cycles.start({
+        agent: "designer",
+        prompt:
+          "Sign-ups dropped after we shipped the new form (screenshot attached). Chart the weekly numbers and tell me what to fix first.",
+        files: [
+          {
+            path: "signup-form.png",
+            content: (await sharp(Buffer.from(MOCKUP_SVG)).png().toBuffer()).toString("base64"),
+            encoding: "base64",
+          },
+          {
+            path: "stats.csv",
+            content: "week,visits,signups\nW1,5200,1664\nW2,5350,1819\nW3,5100,918\nW4,4980,747\n",
+          },
+        ],
+        labels: { demo: "true" },
         source: "api",
       });
     }, 1500);

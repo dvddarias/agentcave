@@ -168,6 +168,8 @@ function RuntimeCard({
     commandTimeoutSec: String(settings.commandTimeoutSec),
     contextTrimRatio: String(settings.contextTrimRatio),
     maxRequestMb: String(settings.maxRequestMb),
+    imageMaxEdgePx: String(settings.imageMaxEdgePx),
+    maxPromptImages: String(settings.maxPromptImages),
   });
   const [f, setF] = useState(init);
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset when the saved settings change
@@ -213,6 +215,21 @@ function RuntimeCard({
         {field("contextTrimRatio", "Trim old outputs at", "Share of the context window (0.1–0.95).")}
         {field("maxRequestMb", "Max request size (MB)")}
       </div>
+      <h3 className="mt-6 mb-2 text-xs font-semibold tracking-wider text-cave-400 uppercase">
+        Images (models that can see them)
+      </h3>
+      <div className="grid gap-4 sm:grid-cols-3">
+        {field(
+          "maxPromptImages",
+          "Images shown with a prompt",
+          "Others stay files the agent can open. 0 = none.",
+        )}
+        {field(
+          "imageMaxEdgePx",
+          "Image size (longest side, px)",
+          "Bigger images are scaled down (256–8000).",
+        )}
+      </div>
       <div className="mt-5 flex justify-end">
         <Button
           variant="primary"
@@ -233,6 +250,8 @@ function RuntimeCard({
               commandTimeoutSec: num(f.commandTimeoutSec),
               contextTrimRatio: num(f.contextTrimRatio),
               maxRequestMb: num(f.maxRequestMb),
+              imageMaxEdgePx: num(f.imageMaxEdgePx),
+              maxPromptImages: num(f.maxPromptImages),
             })
           }
         >

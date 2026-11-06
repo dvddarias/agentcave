@@ -1,5 +1,7 @@
-import type { AgentInternet, JsonSchema } from "@agentcave/client";
+import type { AgentInternet, ImageNotShown, JsonSchema, TurnImage } from "@agentcave/client";
+import type { UserContent } from "ai";
 import type { Manifest } from "../blobs.js";
+import { userImagePart, VIEWABLE_FORMATS } from "./images.js";
 
 export interface SubagentInfo {
   slug: string;
@@ -20,6 +22,8 @@ export interface PromptOptions {
   internet: AgentInternet;
   javascript: boolean;
   python: boolean;
+  /** The model can see images (it gets the `view_image` tool). */
+  vision: boolean;
   agentFiles: string[];
   subagents: SubagentInfo[];
   /** HTTP commands of the cycle. */
@@ -63,6 +67,11 @@ export function buildSystemPrompt(o: PromptOptions): string {
     );
   }
   if (o.python) lines.push("- You can run Python with `python3`.");
+  if (o.vision) {
+    lines.push(
+      `- You can see images. Image files the user sends with a message are shown to you with it. To look at any other image (${VIEWABLE_FORMATS}), such as one you made or found, use the \`view_image\` tool.`,
+    );
+  }
   lines.push(
     "- Very long command output is shortened. When that happens, the full output is saved under `/tmp/agentcave/` so you can `grep` or `sed -n` through it.",
   );
@@ -125,14 +134,47 @@ function formatSize(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-/** The user message for a turn: the prompt, an AgentCave notice (if any) and a list of the files it brought. */
-export function buildUserMessage(prompt: string, files: Manifest, notice?: string | null): string {
-  const text = notice ? `${prompt}\n\n---\n${notice}` : prompt;
+/** Image files of a turn's input: the ones shown to the model, and why the others were not. */
+export interface PromptImages {
+  shown: TurnImage[];
+  notShown: ImageNotShown[];
+}
+
+/**
+ * The user message for a turn: the prompt, an AgentCave notice (if any) and a list of the files it
+ * brought. Images shown to the model come first, each after a line naming its file.
+ */
+export function buildUserMessage(
+  prompt: string,
+  files: Manifest,
+  notice?: string | null,
+  images?: PromptImages,
+): UserContent {
+  let text = notice ? `${prompt}\n\n---\n${notice}` : prompt;
   const paths = Object.keys(files).sort();
-  if (paths.length === 0) return text;
-  const shown = paths.slice(0, 200).map((p) => `- /workspace/${p} (${formatSize(files[p].size)})`);
-  const more = paths.length > 200 ? `\n- … and ${paths.length - 200} more` : "";
-  return `${text}\n\n---\nFiles provided in /workspace (${paths.length}):\n${shown.join("\n")}${more}`;
+  if (paths.length > 0) {
+    const shown = new Map(images?.shown.map((i) => [i.path, i]));
+    const notShown = new Map(images?.notShown.map((i) => [i.path, i.reason]));
+    const line = (p: string) => {
+      const abs = `/workspace/${p}`;
+      const img = shown.get(abs);
+      const why = notShown.get(abs);
+      const note = img
+        ? `, image shown above at ${img.width}×${img.height}`
+        : why
+          ? `, image not shown: ${why}`
+          : "";
+      return `- ${abs} (${formatSize(files[p].size)}${note})`;
+    };
+    const listed = paths.slice(0, 200).map(line);
+    const more = paths.length > 200 ? `\n- … and ${paths.length - 200} more` : "";
+    text = `${text}\n\n---\nFiles provided in /workspace (${paths.length}):\n${listed.join("\n")}${more}`;
+  }
+  if (!images?.shown.length) return text;
+  return [
+    ...images.shown.flatMap((img) => [{ type: "text" as const, text: `${img.path}:` }, userImagePart(img)]),
+    { type: "text" as const, text },
+  ];
 }
 
 function joinWords(items: string[]): string {

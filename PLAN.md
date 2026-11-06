@@ -568,7 +568,6 @@ docker run -d --name agentcave -p 7420:7420 -v agentcave-data:/data ghcr.io/<own
 - **`node:sqlite`** still prints an "experimental" warning in Node 24 (silenced). Its API is stable enough for our simple use.
 
 ## 18. Ideas for later (not in v1 unless you want them)
-- Show image input files to vision models directly (as image parts), not only as files in the sandbox.
 - MCP servers as extra tools for an agent.
 - Cron-style scheduled cycles.
 - Compare view (same prompt on 2+ agents side by side). Re-run already covers part of this.
@@ -596,3 +595,18 @@ Not in the original plan: callers can give a cycle **HTTP commands** (`commands`
 - **Linking calls to bash cards.** The sandbox wraps bash-tool's `bash` tool `execute` in an `AsyncLocalStorage` holding the tool call id; the command reads it, so each `http.call` event carries `toolCallId` even when several bash calls run at once.
 - **Prompt.** The environment section gets "Commands for this task" (usage line + description per command, and one general line). The system prompt stays the same within a turn; a follow-up with `commands` rebuilds it (`cycleSystemPrompt`) and stores a notice for that turn's user message naming the commands added or removed.
 - **Demo mode** gained a support agent whose `get_order_status` command calls a tiny fake shop served by the demo script itself.
+
+### Images (v0.4.0)
+
+Not in the original plan (it was an idea for later): models that take images see them as images. See the README for what callers get; how it is built:
+
+- **Which models.** `cycles.vision` (migration 5) is set when the cycle is created, from the catalog's `input_modalities` for its model, so the system prompt, the tools and the runner agree for the cycle's whole life. Unknown models count as text-only. The environment section gets one line about images and `view_image`.
+- **Preparing** (`engine/images.ts`, `sharp`): the format comes from the first bytes (SVG from its text), never the file name. PNG/JPEG/GIF/WebP that are upright, one frame, at most `imageMaxEdgePx` (default 1568) on the longest side and at most 3.75 MB (base64 under 5 MB) are sent byte for byte; everything else is auto-oriented, fitted inside the limit and written as PNG (JPEG for photo formats, or when the PNG is too big), shrinking further if needed. SVG is rendered at up to 2x (librsvg; input is a buffer, so it can't load other files). Over 50 MB, BMP and HEIC (the prebuilt libvips has no HEVC decoder) give an `ImageError` the model or caller can read. `sharp` ships prebuilt binaries for Alpine on amd64 and arm64, so there is still nothing to compile.
+- **Prompt images.** At the start of a fresh turn (and again after a restart) the runner sniffs every input file's first 4 KB, prepares up to `maxPromptImages` (default 20) and stores converted copies in the blob store. The user message is `[path label, image]… + text` (images before the prompt, as providers recommend); the file list marks each image "shown above at W×H" or "not shown: <reason>". Not for sub-agents, whose input is the parent's whole workspace.
+- **`view_image`** reads any sandbox path through just-bash's filesystem (`/workspace`, `/agent`, `/tmp`), prepares it and stores it in the blob store (so it survives the file changing). Its `toModelOutput` is `content`: a text line plus a file part.
+- **Saved messages hold references, not bytes.** Image parts point at `agentcave-image:<sha256>` (a bare string in user parts; a `URL` in tool results, which JSON turns into a string, so `reviveImageUrls` puts it back when messages are loaded). The AI SDK's `experimental_download` hook reads the bytes from the blob store when a step is sent (cached per run). So `turns.messages` stays small, and the bytes sent are identical every step (prompt caching keeps working).
+- **Tool-result images move to a user message.** OpenAI-style chat APIs (and OpenRouter's) only take text in tool results, so a model middleware (`toolImagesMiddleware`) rewrites each request: the image leaves the tool result (which then says it is in the next message) and goes in a user message right after it, labelled with the result's text. The saved conversation keeps it in the tool result.
+- **Keeping the blobs.** `turns.images` (JSON `TurnImage[]`) lists every image a turn's messages show; retention counts them as referenced, so they live as long as the turn. It is reset with the turn on a restart. `GET /cycles/:id/images/:sha256` only serves images listed there.
+- **Context.** The trim estimate adds `IMAGE_TOKENS` (1600) per image instead of counting reference strings. Trimming an old `view_image` result keeps its text and drops the image; prompt images are never trimmed.
+- **`readFile`** on a binary file returns a one-line note (pointing at `view_image` for images) instead of mangled bytes.
+- **Demo mode** gained a designer agent on a "vision" demo model: a sign-up form screenshot with its prompt, then an SVG chart it draws and checks with `view_image`.

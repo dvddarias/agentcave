@@ -244,6 +244,7 @@ function CycleView({ id }: { id: string }) {
               items={timeline.items}
               streamingKey={timeline.streamingKey}
               running={cycle.status === "running"}
+              imageUrl={(sha) => api.cycles.imageUrl(cycle.id, sha)}
               onOpenFile={(p) => {
                 setSelectedFile(p);
                 setTab("files");

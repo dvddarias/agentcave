@@ -180,6 +180,13 @@ export const IconEye = make(
   </>,
 );
 export const IconCode = make(<path d="m16 18 6-6-6-6M8 6l-6 6 6 6" />);
+export const IconImage = make(
+  <>
+    <rect x="3" y="3" width="18" height="18" rx="2" />
+    <circle cx="9" cy="9" r="2" />
+    <path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21" />
+  </>,
+);
 export const IconTag = make(
   <>
     <path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z" />

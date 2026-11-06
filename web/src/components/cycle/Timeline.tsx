@@ -13,6 +13,7 @@ import {
   IconChevron,
   IconFile,
   IconHistory,
+  IconImage,
   IconMessage,
   IconPlay,
   IconScissors,
@@ -54,7 +55,46 @@ export function SystemPromptCard({
   );
 }
 
-function TurnCard({ item }: { item: Extract<TimelineItem, { kind: "turn" }> }) {
+/** URL of an image the model was shown (`TurnImage.sha256`). */
+type ImageUrl = (sha256: string) => string;
+
+function TurnImages({
+  item,
+  imageUrl,
+}: {
+  item: Extract<TimelineItem, { kind: "turn" }>;
+  imageUrl: ImageUrl;
+}) {
+  if (item.images.length === 0 && item.imagesNotShown.length === 0) return null;
+  return (
+    <div className="mt-2.5 flex flex-wrap items-end gap-2">
+      {item.images.map((img) => (
+        <a
+          key={img.path}
+          href={imageUrl(img.sha256)}
+          target="_blank"
+          rel="noreferrer"
+          title={`${img.path} · ${img.width}×${img.height} · shown to the model`}
+          className="block overflow-hidden rounded-lg border border-cave-700 hover:border-cave-500"
+        >
+          <img
+            src={imageUrl(img.sha256)}
+            alt={img.path}
+            loading="lazy"
+            className="h-20 max-w-40 object-cover"
+          />
+        </a>
+      ))}
+      {item.imagesNotShown.map((i) => (
+        <Pill key={i.path} title={i.reason} className="border-torch-700/50 font-mono text-torch-300">
+          <IconImage size={11} /> {i.path.split("/").pop()} not shown
+        </Pill>
+      ))}
+    </div>
+  );
+}
+
+function TurnCard({ item, imageUrl }: { item: Extract<TimelineItem, { kind: "turn" }>; imageUrl: ImageUrl }) {
   const [showAll, setShowAll] = useState(false);
   const long = item.prompt.length > 1200;
   return (
@@ -98,6 +138,7 @@ function TurnCard({ item }: { item: Extract<TimelineItem, { kind: "turn" }> }) {
             {item.files.length > 30 ? <Pill>+{item.files.length - 30} more</Pill> : null}
           </div>
         ) : null}
+        <TurnImages item={item} imageUrl={imageUrl} />
       </div>
     </div>
   );
@@ -165,6 +206,8 @@ function toolSummary(tool: string, input: unknown): { icon: React.ReactNode; tit
     const size = typeof i.content === "string" ? ` (${i.content.length} chars)` : "";
     return { icon: <IconFile size={14} />, title: `write ${String(i.path ?? "")}${size}`, mono: true };
   }
+  if (tool === "view_image")
+    return { icon: <IconImage size={14} />, title: `view ${String(i.path ?? "")}`, mono: true };
   return { icon: <IconTerminal size={14} />, title: tool, mono: true };
 }
 
@@ -196,7 +239,15 @@ function BashOutput({ result }: { result: ToolResult }) {
   );
 }
 
-function ToolCard({ item }: { item: Extract<TimelineItem, { kind: "tool" }> }) {
+/** What `view_image` returns (the image itself goes to the model). */
+interface ViewedImage {
+  path: string;
+  sha256: string;
+  width: number;
+  height: number;
+}
+
+function ToolCard({ item, imageUrl }: { item: Extract<TimelineItem, { kind: "tool" }>; imageUrl: ImageUrl }) {
   const [open, setOpen] = useState(false);
   const r = item.result;
   if (item.tool === "submit_answer") {
@@ -229,6 +280,7 @@ function ToolCard({ item }: { item: Extract<TimelineItem, { kind: "tool" }> }) {
   if (item.tool.startsWith("ask_")) return <SubagentCard item={item} />;
 
   const s = toolSummary(item.tool, item.input);
+  const viewed = item.tool === "view_image" && r && !r.error ? (r.output as ViewedImage) : null;
   const exit = r?.exitCode;
   const failed = !!r?.error || (exit !== null && exit !== undefined && exit !== 0);
   return (
@@ -283,13 +335,32 @@ function ToolCard({ item }: { item: Extract<TimelineItem, { kind: "tool" }> }) {
         />
       </button>
       {item.httpCalls?.length ? <HttpCallChips calls={item.httpCalls} /> : null}
+      {viewed ? (
+        <a
+          href={imageUrl(viewed.sha256)}
+          target="_blank"
+          rel="noreferrer"
+          title={`${viewed.width}×${viewed.height}, as the model saw it`}
+          className="mx-3 mb-2.5 block w-fit overflow-hidden rounded-lg border border-cave-700 hover:border-cave-500"
+        >
+          <img
+            src={imageUrl(viewed.sha256)}
+            alt={viewed.path}
+            loading="lazy"
+            className="max-h-48 max-w-full"
+          />
+        </a>
+      ) : null}
       {open ? (
         <div className="space-y-2 border-t border-cave-750 bg-cave-925 p-3">
           {item.tool === "bash" && s.title.includes("\n") ? <CodeBlock code={s.title} lang="bash" /> : null}
           {item.tool === "writeFile" ? (
             <CodeBlock code={String((item.input as { content?: string })?.content ?? "")} maxHeight={360} />
           ) : null}
-          {item.tool !== "bash" && item.tool !== "writeFile" && item.tool !== "readFile" ? (
+          {item.tool !== "bash" &&
+          item.tool !== "writeFile" &&
+          item.tool !== "readFile" &&
+          item.tool !== "view_image" ? (
             <CodeBlock code={JSON.stringify(item.input, null, 2)} lang="json" />
           ) : null}
           {r?.error ? (
@@ -301,7 +372,7 @@ function ToolCard({ item }: { item: Extract<TimelineItem, { kind: "tool" }> }) {
           {r && item.tool === "readFile" ? (
             <CodeBlock code={String((r.output as { content?: string })?.content ?? "")} maxHeight={420} />
           ) : null}
-          {r && !r.error && item.tool !== "bash" && item.tool !== "readFile" ? (
+          {r && !r.error && item.tool !== "bash" && item.tool !== "readFile" && item.tool !== "view_image" ? (
             <CodeBlock code={JSON.stringify(r.output, null, 2)} lang="json" maxHeight={300} />
           ) : null}
           {!r ? (
@@ -449,11 +520,13 @@ export function Timeline({
   items,
   streamingKey,
   running,
+  imageUrl,
   onOpenFile,
 }: {
   items: TimelineItem[];
   streamingKey: string | null;
   running: boolean;
+  imageUrl: ImageUrl;
   onOpenFile?: (path: string) => void;
 }) {
   return (
@@ -461,7 +534,7 @@ export function Timeline({
       {items.map((item) => {
         switch (item.kind) {
           case "turn":
-            return <TurnCard key={item.key} item={item} />;
+            return <TurnCard key={item.key} item={item} imageUrl={imageUrl} />;
           case "restart":
             return (
               <div key={item.key} className="flex items-center gap-3 py-2 text-xs text-torch-300/80">
@@ -479,7 +552,7 @@ export function Timeline({
           case "text":
             return <TextBlock key={item.key} item={item} streaming={running && item.key === streamingKey} />;
           case "tool":
-            return <ToolCard key={item.key} item={item} />;
+            return <ToolCard key={item.key} item={item} imageUrl={imageUrl} />;
           case "nudge":
             return (
               <div

@@ -71,6 +71,7 @@ export const ROUTES: RouteDoc[] = [
     summary: "Start a cycle",
     description: [
       'Queues an agentic cycle. Files go inside the JSON (`encoding: "base64"` for binary). Returns immediately with status `queued`.',
+      "When the model takes images (`vision` in the response), image files are also shown to it with the prompt (up to 20, scaled down to 1568 px; see Settings), and it gets a `view_image` tool for any other image. `Turn.images` and the `turn.start` event list what it saw.",
       "`commands` (optional, max 32) gives the agent HTTP commands: each one is a real command in the sandbox (`get_order_status --orderId A1`) that works with pipes, loops and redirects. AgentCave checks the flags against `inputSchema` and POSTs `{ command, input, cycleId, turn, callId, labels }` to `url` from the server, with `headers` (secret: never shown to the model or returned, only masked) and, when a signing secret is set, `X-AgentCave-Signature`. The response body is the command's stdout. The agent's internet mode does not apply, and any URL works, internal addresses included. 400 if a name clashes with a sandbox command or shell builtin, or a schema is invalid.",
     ].join("\n\n"),
     body: startCycleSchema,
@@ -221,6 +222,16 @@ export const ROUTES: RouteDoc[] = [
     summary: "Download the workspace as a zip",
     params: [id, { name: "changed", in: "query", description: "`true` for only added/modified files" }],
     returns: "application/zip",
+  },
+  {
+    method: "get",
+    path: "/cycles/{id}/images/{sha256}",
+    tag: "Files",
+    summary: "An image the model was shown",
+    description:
+      "As it was sent to the model (upright, scaled down, converted). Only images listed in the cycle's `Turn.images` (or the `turn.start` event and `view_image` results); 404 otherwise.",
+    params: [id, { name: "sha256", in: "path", required: true, description: "`TurnImage.sha256`" }],
+    returns: "image bytes",
   },
   {
     method: "get",

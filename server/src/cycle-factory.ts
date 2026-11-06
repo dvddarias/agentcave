@@ -45,7 +45,7 @@ export async function storeFiles(ctx: Ctx, files: FileInput[] | undefined): Prom
 export function cycleSystemPrompt(
   ctx: Ctx,
   versionRow: VersionRow,
-  o: { outputSchema: JsonSchema | null; commands: StoredCommand[]; isSubagent: boolean },
+  o: { outputSchema: JsonSchema | null; commands: StoredCommand[]; isSubagent: boolean; vision: boolean },
 ): string {
   const config = ctx.agents.config(versionRow);
   const subagents: SubagentInfo[] = [];
@@ -63,6 +63,7 @@ export function cycleSystemPrompt(
     internet: config.internet,
     javascript: config.javascript,
     python: config.python,
+    vision: o.vision,
     agentFiles: ctx.agents.versionFiles(versionRow.id).map((f) => f.path),
     subagents,
     commands: o.commands.map((c) => ({ name: c.name, description: c.description, usage: usageLine(c) })),
@@ -84,11 +85,16 @@ export async function newCycleParams(ctx: Ctx, req: NewCycleRequest): Promise<Cr
   const outputSchema = req.outputSchema !== undefined ? req.outputSchema : config.outputSchema;
   if (outputSchema) assertValidSchema(outputSchema);
   const commands = req.parent ? [] : await checkCommands(req.commands ?? []);
+  const model = req.overrides?.model ?? config.model;
+  // Fixed for the cycle, so the system prompt and the tools agree on it.
+  await ctx.models.ensureLoaded();
+  const vision = ctx.models.get(model)?.supportsImages === true;
 
   const systemPrompt = cycleSystemPrompt(ctx, versionRow, {
     outputSchema,
     commands,
     isSubagent: !!req.parent,
+    vision,
   });
 
   const inputManifest = req.inputManifest ?? (await storeFiles(ctx, req.files));
@@ -104,8 +110,9 @@ export async function newCycleParams(ctx: Ctx, req: NewCycleRequest): Promise<Cr
     depth: req.parent ? req.parent.depth + 1 : 0,
     source: req.source,
     rerunOf: req.rerunOf ?? null,
-    model: req.overrides?.model ?? config.model,
+    model,
     reasoning: req.overrides?.reasoning ?? config.reasoning,
+    vision,
     limits: mergeLimits(settings.defaultLimits, config.limits, req.overrides?.limits),
     outputSchema,
     labels: req.labels ?? {},

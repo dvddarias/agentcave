@@ -43,7 +43,7 @@ npm install
 npm run demo        # → http://localhost:7420
 ```
 
-Demo mode uses a scripted fake model ($0). It creates three sample agents (a code reviewer that delegates to a test writer, and a support agent that looks up orders with an [HTTP command](#http-commands)) and starts two cycles, so you can watch the streaming UI right away.
+Demo mode uses a scripted fake model ($0). It creates four sample agents (a code reviewer that delegates to a test writer, a support agent that looks up orders with an [HTTP command](#http-commands), and a designer whose model [sees images](#images)) and starts three cycles, so you can watch the streaming UI right away.
 
 ---
 
@@ -69,6 +69,17 @@ Demo mode uses a scripted fake model ($0). It creates three sample agents (a cod
 **Sub-agents.** An agent can call agents from its allow list as tools (`ask_<slug>`). The sub-agent works on a copy of the workspace, and its changed files come back under `/workspace/.subagents/<slug>-<n>/`. Its cost counts toward the caller's limits. Stopping the parent stops the children.
 
 **Restarts.** If the container stops while cycles are running, they restart from the beginning of the interrupted turn on the next boot (the workspace is restored from a snapshot).
+
+### Images
+
+When the cycle's model can take images (the model picker's "image input" badge, from OpenRouter's catalog), the model **sees them as images**, not just as files:
+
+- **Sent with a prompt.** Image files in `files` (of `POST /cycles` or a follow-up) are shown to the model with that prompt, each labelled with its path. They are still files in `/workspace` too. Up to 20 per prompt (Settings); the file list the model gets says which ones it was not shown, and why.
+- **`view_image` tool.** The agent can look at any other image in the sandbox: one in `/agent`, one it downloaded, or a chart it just drew (SVG included), so it can check its own visual work.
+- **Prepared for every provider.** AgentCave reads the file's content (not its name), turns photos upright, scales anything over 1568 px on its longest side down (Settings), converts AVIF, TIFF and SVG to PNG or JPEG, keeps only the first frame of an animation, and keeps each image under the 5 MB some providers allow. Small PNG, JPEG, GIF and WebP files are sent as they are. BMP and HEIC are not supported (the agent is told).
+- **Conversation memory.** Images stay in the conversation for follow-ups and `continue`. When a long cycle is trimmed, old `view_image` results lose their image like other old tool outputs; the agent can open the file again.
+- **What the model saw** is on each turn (`Turn.images`, the `turn.start` event) and can be fetched as it was sent: `GET /cycles/:id/images/:sha256`. The UI shows thumbnails on the prompt and on `view_image` cards.
+- A model without image input gets no `view_image` tool, and image files are plain files to it. A sub-agent is not shown its parent's images with its prompt (its input is the whole workspace); it opens the ones it needs with `view_image`.
 
 ### HTTP commands
 
@@ -114,6 +125,7 @@ Base URL `http://<host>:7420/api/v1` (with `BASE_PATH`: `…/<prefix>/api/v1`). 
 | `POST /cycles/:id/continue` | after a limit: run the same turn on with more room `{ limits?, extendPercent?, message? }` (empty body = +50%) |
 | `POST /cycles/:id/rerun` | same input as a new cycle, optional overrides and `commands` |
 | `GET /cycles/:id/files[/path]`, `/files.zip` | workspace files (`?changed=true`) |
+| `GET /cycles/:id/images/:sha256` | an image the model was shown, as it was sent (see `Turn.images`) |
 | `GET /cycles?agent=&status=&label.k=v` | list |
 | `/agents…` | create, update (new version), versions, restore, export/import `.md`/`.zip` |
 | `/settings`, `/models`, `/stats`, `/health` | the rest |
@@ -124,7 +136,7 @@ Base URL `http://<host>:7420/api/v1` (with `BASE_PATH`: `…/<prefix>/api/v1`). 
 
 ```bash
 # a fixed version (recommended: it never changes under you)
-npm install https://github.com/dvddarias/agentcave/releases/download/v0.3.0/agentcave-client-0.3.0.tgz
+npm install https://github.com/dvddarias/agentcave/releases/download/v0.4.0/agentcave-client-0.4.0.tgz
 # or the build of the latest push to main
 npm install https://github.com/dvddarias/agentcave/releases/download/client-latest/agentcave-client.tgz
 ```
@@ -176,7 +188,7 @@ example.com {
 ```yaml
 services:
   agentcave:
-    image: ghcr.io/dvddarias/agentcave:0.3.0
+    image: ghcr.io/dvddarias/agentcave:0.4.0
     environment:
       BASE_PATH: /cave
 ```

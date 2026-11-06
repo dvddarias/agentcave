@@ -148,6 +148,8 @@ export const settingsUpdateSchema = z.strictObject({
   contextTrimRatio: z.number().min(0.1).max(0.95).optional(),
   maxRequestMb: z.number().min(1).max(2048).optional(),
   webhookSecret: z.string().max(500).nullable().optional(),
+  imageMaxEdgePx: z.number().int().min(256).max(8000).optional(),
+  maxPromptImages: z.number().int().min(0).max(100).optional(),
 });
 
 export const testTokenSchema = z.strictObject({ token: z.string().max(500).optional() });

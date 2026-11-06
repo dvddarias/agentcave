@@ -100,6 +100,7 @@ export class CycleService {
           outputSchema: parseJson<JsonSchema | null>(row.output_schema, null),
           commands: next,
           isSubagent: false,
+          vision: row.vision === 1,
         }),
         notice: commandsChangeNotice(parseJson<StoredCommand[]>(row.commands, []), next),
       };
@@ -248,6 +249,18 @@ export class CycleService {
         type: mimeFor(rel),
       };
     }
+  }
+
+  /** An image one of the cycle's turns showed the model, as the model got it. */
+  openImage(id: string, sha256: string): { stream: ReadableStream; size: number; type: string } {
+    this.ctx.cycles.getRow(id);
+    const image = /^[0-9a-f]{64}$/.test(sha256) ? this.ctx.cycles.findImage(id, sha256) : undefined;
+    if (!image) throw notFound(`Image '${sha256}'`);
+    return {
+      stream: Readable.toWeb(createReadStream(this.ctx.blobs.pathOf(sha256))) as ReadableStream,
+      size: image.size,
+      type: image.mediaType,
+    };
   }
 
   /** Streams the workspace (or only the changed files) as a zip. */

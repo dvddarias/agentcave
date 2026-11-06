@@ -304,6 +304,11 @@ export function DetailsPanel({
           <span className="font-mono">{cycle.model}</span>
         </Row>
         <Row k="Reasoning">{cycle.reasoning}</Row>
+        <Row k="Sees images">
+          {cycle.vision
+            ? "yes: images sent with a prompt are shown to it, and it can open others with view_image"
+            : "no: image files are plain files to it"}
+        </Row>
         <Row k="Source">{cycle.source}</Row>
         {cycle.parentId ? (
           <Row k="Parent">

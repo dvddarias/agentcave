@@ -158,6 +158,10 @@ export interface Settings {
   maxRequestMb: number;
   /** Shown in full: receivers need it to verify `X-AgentCave-Signature`. */
   webhookSecret: string | null;
+  /** Images are scaled down to at most this many pixels on their longest side before a model sees them. */
+  imageMaxEdgePx: number;
+  /** At most this many image files are shown to the model with a prompt (0 = none; it can still use `view_image`). */
+  maxPromptImages: number;
 }
 
 export interface SettingsUpdate {
@@ -175,6 +179,10 @@ export interface SettingsUpdate {
   maxRequestMb?: number;
   /** A string sets it, `null` clears it, `"generate"` creates a random one. */
   webhookSecret?: string | null;
+  /** 256–8000. */
+  imageMaxEdgePx?: number;
+  /** 0–100. */
+  maxPromptImages?: number;
 }
 
 export interface TokenCheck {
@@ -274,6 +282,38 @@ export interface FileChanges {
   added: string[];
   modified: string[];
   deleted: string[];
+}
+
+// ---------------------------------------------------------------------------
+// Images
+// ---------------------------------------------------------------------------
+
+/**
+ * An image the model was shown. With a vision model (`Cycle.vision`), image files sent with a prompt
+ * are shown with it, and the agent can open any other image with its `view_image` tool. Images are
+ * made upright, scaled down to `Settings.imageMaxEdgePx` and sent as PNG, JPEG, GIF or WebP; these
+ * fields describe what the model got.
+ */
+export interface TurnImage {
+  /** Where the file is in the sandbox, e.g. `/workspace/photo.jpg`. */
+  path: string;
+  /** `prompt`: sent with the turn's prompt. `view_image`: the agent opened it. */
+  source: "prompt" | "view_image";
+  mediaType: string;
+  width: number;
+  height: number;
+  /** Bytes sent to the model. */
+  size: number;
+  /** `GET /cycles/:id/images/:sha256` returns the image as the model saw it. */
+  sha256: string;
+  /** The `view_image` tool call that opened it. */
+  callId?: string;
+}
+
+/** An image file sent with a prompt that the model was not shown, and why. */
+export interface ImageNotShown {
+  path: string;
+  reason: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -416,6 +456,11 @@ export interface Cycle {
   agent: { slug: string; name: string; version: number };
   model: string;
   reasoning: ReasoningEffort;
+  /**
+   * The model can see images (from the model catalog when the cycle was created): image files sent
+   * with a prompt are shown to it, and it has a `view_image` tool for any other image.
+   */
+  vision: boolean;
   limits: Limits;
   outputSchema: JsonSchema | null;
   labels: Record<string, string>;
@@ -459,6 +504,8 @@ export interface Turn {
   prompt: string;
   /** Files added by this turn's request. */
   inputFiles: string[];
+  /** Images the model was shown in this turn: with the prompt, then the ones it opened. */
+  images: TurnImage[];
   status: CycleStatus;
   answer: Answer | null;
   files: FileChanges | null;
@@ -518,6 +565,10 @@ export type CycleEventPayload =
       data: {
         prompt: string;
         files: string[];
+        /** Image files shown to the model with the prompt. */
+        images: TurnImage[];
+        /** Image files sent with the prompt that the model was not shown, and why. */
+        imagesNotShown: ImageNotShown[];
         systemPrompt: string;
         model: string;
         reasoning: ReasoningEffort;

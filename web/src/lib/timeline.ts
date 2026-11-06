@@ -4,8 +4,10 @@ import type {
   CycleEvent,
   CycleStatus,
   FileChanges,
+  ImageNotShown,
   Limits,
   LimitUsage,
+  TurnImage,
   Usage,
 } from "@agentcave/client";
 
@@ -29,7 +31,18 @@ export interface SubagentRef {
 }
 
 export type TimelineItem =
-  | { kind: "turn"; key: string; turn: number; attempt: number; prompt: string; files: string[]; ts: string }
+  | {
+      kind: "turn";
+      key: string;
+      turn: number;
+      attempt: number;
+      prompt: string;
+      files: string[];
+      /** Images shown to the model with the prompt, and the ones that were not. */
+      images: TurnImage[];
+      imagesNotShown: ImageNotShown[];
+      ts: string;
+    }
   | { kind: "restart"; key: string; attempt: number; reason: string; ts: string }
   | {
       kind: "continue";
@@ -122,6 +135,9 @@ export function buildTimeline(events: CycleEvent[]): Timeline {
           attempt: e.attempt,
           prompt: e.data.prompt,
           files: e.data.files,
+          // Events from before images were shown to models have neither.
+          images: e.data.images ?? [],
+          imagesNotShown: e.data.imagesNotShown ?? [],
           ts: e.ts,
         });
         break;

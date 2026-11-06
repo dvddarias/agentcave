@@ -502,7 +502,7 @@ describe("upgrading", () => {
     await first.cave.close();
 
     // Put the database back the way the previous version left such a turn: only the prompt was
-    // saved, and the columns of migrations 2 and 4 and the table of migration 3 did not exist.
+    // saved, and the columns of migrations 2, 4 and 5 and the table of migration 3 did not exist.
     const db = new DatabaseSync(path.join(dataDir, "agentcave.db"));
     const turn = db.prepare("SELECT messages FROM turns WHERE cycle_id = ?").get(cycle.id) as {
       messages: string;
@@ -517,9 +517,11 @@ describe("upgrading", () => {
       "last_step",
       "resume",
       "notice",
+      "images",
     ])
       db.exec(`ALTER TABLE turns DROP COLUMN ${col}`);
     db.exec("ALTER TABLE cycles DROP COLUMN commands");
+    db.exec("ALTER TABLE cycles DROP COLUMN vision");
     db.exec("DROP TABLE cycle_usage");
     db.exec("PRAGMA user_version = 1");
     db.close();

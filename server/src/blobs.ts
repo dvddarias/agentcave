@@ -68,6 +68,18 @@ export class BlobStore {
     return fs.readFile(this.pathOf(sha));
   }
 
+  /** The first `bytes` bytes of a blob (to tell its type without reading it all). */
+  async readHead(sha: string, bytes: number): Promise<Buffer> {
+    const file = await fs.open(this.pathOf(sha), "r");
+    try {
+      const buf = Buffer.alloc(bytes);
+      const { bytesRead } = await file.read(buf, 0, bytes, 0);
+      return buf.subarray(0, bytesRead);
+    } finally {
+      await file.close();
+    }
+  }
+
   /** Hashes every regular file under `dir` into the store and returns its manifest. */
   async snapshotDir(dir: string, opts: { exclude?: (rel: string) => boolean } = {}): Promise<Manifest> {
     const manifest: Manifest = {};

@@ -231,6 +231,7 @@ describe("prompts", () => {
       internet: { mode: "allowlist", allowlist: ["https://api.github.com/"] },
       javascript: true,
       python: false,
+      vision: false,
       agentFiles: ["a.md"],
       subagents: [
         {
